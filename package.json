@@ -1,73 +1,73 @@
 {
-  "name": "notion-static-exporter",
-  "version": "1.0.12",
-  "description": "Scrape public Notion sites into static HTML for GitHub Pages",
-  "type": "module",
-  "bin": {
-    "notion-static-exporter": "./dist/cli.js"
-  },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "default": "./dist/index.js"
-    },
-    "./package.json": "./package.json"
-  },
-  "files": [
-    "dist",
-    "LICENSE",
-    "README.md",
-    "CHANGELOG.md",
-    "examples"
-  ],
-  "sideEffects": false,
-  "scripts": {
-    "build": "node ./scripts/build.mjs",
-    "start": "bun run build && node dist/cli.js",
-    "help": "bun run build && node dist/cli.js help",
-    "prepack": "bun run build",
-    "prepublishOnly": "bun run build",
-    "pack:check": "bun pm pack --dry-run",
-    "publish:dry": "bun publish --access public --dry-run",
-    "publish:prod": "bun publish --access public"
-  },
-  "engines": {
-    "node": ">=18.18.0"
-  },
-  "keywords": [
-    "notion",
-    "scraper",
-    "static",
-    "github-pages",
-    "puppeteer",
-    "cli"
-  ],
-  "author": {
-    "name": "novailoveyou"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Novailoveyou/notion-static-exporter.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Novailoveyou/notion-static-exporter/issues"
-  },
-  "homepage": "https://github.com/Novailoveyou/notion-static-exporter#readme",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
-  "dependencies": {
-    "puppeteer": "^24.22.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.13.10",
-    "typescript": "^5.9.2"
-  }
+	"name": "notion-static-exporter",
+	"version": "1.0.13",
+	"description": "Scrape public Notion sites into static HTML for GitHub Pages",
+	"type": "module",
+	"bin": {
+		"notion-static-exporter": "./dist/cli.js"
+	},
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs",
+			"default": "./dist/index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"dist",
+		"LICENSE",
+		"README.md",
+		"CHANGELOG.md",
+		"examples"
+	],
+	"sideEffects": false,
+	"scripts": {
+		"build": "node ./scripts/build.mjs",
+		"start": "bun run build && node dist/cli.js",
+		"help": "bun run build && node dist/cli.js help",
+		"prepack": "bun run build",
+		"prepublishOnly": "bun run build",
+		"pack:check": "bun pm pack --dry-run",
+		"publish:dry": "bun publish --access public --dry-run",
+		"publish:prod": "bun publish --access public"
+	},
+	"engines": {
+		"node": ">=18.18.0"
+	},
+	"keywords": [
+		"notion",
+		"scraper",
+		"static",
+		"github-pages",
+		"puppeteer",
+		"cli"
+	],
+	"author": {
+		"name": "novailoveyou"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Novailoveyou/notion-static-exporter.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Novailoveyou/notion-static-exporter/issues"
+	},
+	"homepage": "https://github.com/Novailoveyou/notion-static-exporter#readme",
+	"publishConfig": {
+		"access": "public",
+		"registry": "https://registry.npmjs.org/"
+	},
+	"dependencies": {
+		"puppeteer": "^24.22.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.13.10",
+		"typescript": "^5.9.2"
+	}
 }
