@@ -95,7 +95,7 @@ export function writePwaAssets(
 
 /** Service worker: precache on install, cache-first for same-origin, network fallback. */
 const SERVICE_WORKER_JS = `/* nsp service worker */
-const CACHE = "nsp-static-v8";
+const CACHE = "nsp-static-v9";
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -129,6 +129,30 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+
+  const isMedia =
+    /\\.(mp3|m4a|ogg|wav|aac|mp4|webm|mov)(\\?|$)/i.test(url.pathname) ||
+    (req.headers.get("accept") || "").includes("audio/");
+  // Range requests must hit the network — serving a full cached body breaks audio
+  if (isMedia || req.headers.has("range")) {
+    event.respondWith(
+      fetch(req)
+        .then((fresh) => {
+          if (fresh && fresh.ok && !req.headers.has("range")) {
+            const copy = fresh.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return fresh;
+        })
+        .catch(async () => {
+          const cache = await caches.open(CACHE);
+          const cached = await cache.match(req, { ignoreSearch: true });
+          if (cached) return cached;
+          throw new Error("offline media miss");
+        }),
+    );
+    return;
+  }
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);

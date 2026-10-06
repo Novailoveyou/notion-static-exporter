@@ -58,9 +58,9 @@ jobs:
             --url "$NOTION_URL" \
             --out . \
             --keep-cname \
-            --delay-ms 4000 \
+            --delay-ms 800 \
             --retries 4 \
-            --concurrency 2
+            --concurrency 4
 
       - name: Commit & push
         run: |

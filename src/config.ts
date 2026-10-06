@@ -39,8 +39,8 @@ export const exampleConfigJson = `{
   "out": ".",
   "keepCname": true,
   "maxPages": 0,
-  "delayMs": 1500,
-  "concurrency": 3,
+  "delayMs": 800,
+  "concurrency": 4,
   "maxRetries": 3
 }
 `;

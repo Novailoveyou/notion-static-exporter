@@ -1,6 +1,6 @@
 {
   "name": "notion-static-exporter",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Scrape public Notion sites into static HTML for GitHub Pages",
   "type": "module",
   "bin": {

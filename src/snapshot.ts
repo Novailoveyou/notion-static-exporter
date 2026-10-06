@@ -166,8 +166,6 @@ export async function captureCollectionViews(
       const label = plan.tabLabels[i] || "View";
       await clickTab(i);
       await page.keyboard.press("Escape").catch(() => {});
-      const waitMs = /calendar|table|board|timeline/i.test(label) ? 2800 : 1400;
-      await new Promise((r) => setTimeout(r, waitMs));
 
       const expectSel = /calendar/i.test(label)
         ? ".notion-calendar-view"
@@ -180,9 +178,15 @@ export async function captureCollectionViews(
               : /gallery/i.test(label)
                 ? ".notion-gallery-view"
                 : null;
+
+      const ceilingMs = /calendar|table|board|timeline/i.test(label)
+        ? 2200
+        : 1200;
+      const started = Date.now();
+      let ready = !expectSel;
       if (expectSel) {
-        for (let attempt = 0; attempt < 8; attempt++) {
-          const ready = await page.evaluate(
+        for (let attempt = 0; attempt < 6; attempt++) {
+          ready = await page.evaluate(
             (blockId, sel) => {
               const body = (() => {
                 const roots = Array.from(
@@ -218,10 +222,13 @@ export async function captureCollectionViews(
             expectSel,
           );
           if (ready) break;
+          if (Date.now() - started > ceilingMs) break;
           await clickTab(i);
           await page.keyboard.press("Escape").catch(() => {});
-          await new Promise((r) => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 280));
         }
+      } else {
+        await new Promise((r) => setTimeout(r, 400));
       }
 
       const html = await page.evaluate((blockId) => {
@@ -331,7 +338,7 @@ export async function captureCollectionViews(
  */
 export async function expandAllToggles(page: Page): Promise<number> {
   let opened = 0;
-  for (let pass = 0; pass < 12; pass++) {
+  for (let pass = 0; pass < 10; pass++) {
     const before = await page.evaluate(
       () => document.querySelectorAll(".notion-toggle-block").length,
     );
@@ -354,27 +361,27 @@ export async function expandAllToggles(page: Page): Promise<number> {
             /* ignore */
           }
         });
-        await btn.click({ delay: 20 });
+        await btn.click({ delay: 15 });
         passOpened += 1;
         opened += 1;
         // Wait until this control reports open, or give up quickly
         await page
           .waitForFunction(
             (el) => el.getAttribute("aria-expanded") === "true",
-            { timeout: 2500 },
+            { timeout: 1200 },
             btn,
           )
           .catch(() => null);
-        await new Promise((r) => setTimeout(r, 350));
+        await new Promise((r) => setTimeout(r, 150));
       } catch {
         /* overlay / detached — continue */
       }
     }
 
     try {
-      await page.waitForNetworkIdle({ idleTime: 400, timeout: 4_000 });
+      await page.waitForNetworkIdle({ idleTime: 250, timeout: 2_500 });
     } catch {
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     const after = await page.evaluate(
@@ -386,9 +393,9 @@ export async function expandAllToggles(page: Page): Promise<number> {
 
   // Final settle so nested media requests can start
   try {
-    await page.waitForNetworkIdle({ idleTime: 500, timeout: 5_000 });
+    await page.waitForNetworkIdle({ idleTime: 300, timeout: 3_000 });
   } catch {
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 200));
   }
   return opened;
 }
@@ -570,17 +577,19 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
         } catch {
           /* ignore */
         }
-        await delay(40);
+        await delay(60);
+
+        const isMounted = () =>
+          Boolean(
+            block.querySelector(
+              "img[src]:not([src^='data:']), audio[src], video[src]",
+            ),
+          );
 
         // Click to force Notion player / image mount (never follow bookmark links)
-        const alreadyMounted = Boolean(
-          block.querySelector(
-            "img[src]:not([src^='data:']), audio[src], video[src]",
-          ),
-        );
         if (
           !block.classList.contains("notion-bookmark-block") &&
-          !alreadyMounted
+          !isMounted()
         ) {
           const hit =
             block.querySelector("[role='button']") ||
@@ -591,7 +600,11 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
           } catch {
             /* ignore */
           }
-          await delay(80);
+          // Wait for Notion to mount real media after scroll/click
+          const deadline = Date.now() + 1800;
+          while (Date.now() < deadline && !isMounted()) {
+            await delay(120);
+          }
         }
 
         walkFiber(fiberOf(block));
@@ -852,7 +865,29 @@ export async function freezeNotionPage(page: Page): Promise<string> {
       ) as HTMLElement | null;
       if (btn) btn.click();
     }
-    await delay(600);
+    await delay(400);
+
+    // Convert Notion emoji spritesheet imgs → unicode spans (spritesheets aren't mirrored)
+    for (const img of Array.from(
+      document.querySelectorAll("img.notion-emoji"),
+    ) as HTMLImageElement[]) {
+      const glyph = (img.getAttribute("alt") || "").trim();
+      if (!glyph) continue;
+      const span = document.createElement("span");
+      span.className = "notion-emoji";
+      span.setAttribute("role", "img");
+      span.setAttribute("aria-label", glyph);
+      span.textContent = glyph;
+      const st = img.getAttribute("style") || "";
+      const w = img.style.width || "";
+      const h = img.style.height || "";
+      span.style.cssText =
+        `display:inline-block;line-height:1;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;` +
+        (w ? `width:${w};` : "") +
+        (h ? `height:${h};font-size:${h};` : "") +
+        (st.includes("vertical-align") ? "vertical-align:-0.1em;" : "");
+      img.replaceWith(span);
+    }
 
     for (const img of Array.from(document.querySelectorAll("img"))) {
       const el = img as HTMLImageElement;
@@ -1056,9 +1091,11 @@ export async function freezeNotionPage(page: Page): Promise<string> {
     }
 
     // Unlock responsive layout: Notion freezes desktop widths at scrape time
-    const html = document.documentElement;
-    html.style.setProperty("--full-viewport-height", "100dvh");
-    html.style.removeProperty("width");
+    const htmlEl = document.documentElement;
+    htmlEl.style.setProperty("--full-viewport-height", "100dvh");
+    htmlEl.style.setProperty("--safe-padding-left", "0px");
+    htmlEl.style.setProperty("--safe-padding-right", "0px");
+    htmlEl.style.removeProperty("width");
 
     for (const el of Array.from(
       document.querySelectorAll(".notion-frame, .notion-cursor-listener, main"),
@@ -1070,6 +1107,24 @@ export async function freezeNotionPage(page: Page): Promise<string> {
       }
       if (h.style.height && h.style.height.includes("100vh")) {
         h.style.height = "calc(-44px + 100dvh)";
+      }
+    }
+
+    // Clamp large frozen side padding on page chrome (desktop scrape viewport)
+    for (const el of Array.from(
+      document.querySelectorAll(
+        ".layout, .layout-wide, .layout-content, .notion-page-content",
+      ),
+    ) as HTMLElement[]) {
+      const padL = parseFloat(el.style.paddingLeft || el.style.paddingInlineStart || "0");
+      const padR = parseFloat(el.style.paddingRight || el.style.paddingInlineEnd || "0");
+      if (padL > 24) {
+        el.style.paddingLeft = "0px";
+        el.style.paddingInlineStart = "0px";
+      }
+      if (padR > 24) {
+        el.style.paddingRight = "0px";
+        el.style.paddingInlineEnd = "0px";
       }
     }
 

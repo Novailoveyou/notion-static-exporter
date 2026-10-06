@@ -248,36 +248,50 @@ export async function waitForNotionContent(
 ): Promise<void> {
   const deep = opts.deep !== false;
   await waitForLiveNotionUi(page);
-  // Collection galleries often hydrate after the page shell — wait briefly so
-  // fingerprints / link discovery aren't computed against an empty view.
-  await page
-    .waitForFunction(
-      () => {
-        const hosts = document.querySelectorAll(
-          ".notion-collection_view-block, .notion-collection_view_page-block, .notion-gallery-view, .notion-table-view, .notion-list-view, .notion-board-view",
-        );
-        if (!hosts.length) return true;
-        return (
-          document.querySelectorAll(
-            ".notion-collection-item, .notion-gallery-view .notion-page-block, .notion-list-view .notion-page-block, .notion-board-view .notion-page-block, .notion-table-view-row",
-          ).length > 0
-        );
-      },
-      { timeout: 20_000 },
-    )
-    .catch(() => {
-      /* page may have empty DBs — continue */
-    });
+
+  const hasCollections = await page.evaluate(() =>
+    Boolean(
+      document.querySelector(
+        ".notion-collection_view-block, .notion-collection_view_page-block, .notion-gallery-view, .notion-table-view, .notion-list-view, .notion-board-view",
+      ),
+    ),
+  );
+
+  if (hasCollections) {
+    // Collection galleries often hydrate after the page shell — wait briefly so
+    // fingerprints / link discovery aren't computed against an empty view.
+    await page
+      .waitForFunction(
+        () => {
+          const hosts = document.querySelectorAll(
+            ".notion-collection_view-block, .notion-collection_view_page-block, .notion-gallery-view, .notion-table-view, .notion-list-view, .notion-board-view",
+          );
+          if (!hosts.length) return true;
+          return (
+            document.querySelectorAll(
+              ".notion-collection-item, .notion-gallery-view .notion-page-block, .notion-list-view .notion-page-block, .notion-board-view .notion-page-block, .notion-table-view-row",
+            ).length > 0
+          );
+        },
+        { timeout: 20_000 },
+      )
+      .catch(() => {
+        /* page may have empty DBs — continue */
+      });
+  }
+
   if (!deep) {
-    // Reveal collections so fingerprint + link discovery see new gallery cards
-    await settleNetwork(page, 400, 4_000);
-    await revealLazyContent(page);
-    await settleNetwork(page, 300, 3_000);
+    await settleNetwork(page, 350, 3_500);
+    // Only scroll for fingerprint/link discovery when collections virtualize cards
+    if (hasCollections) {
+      await revealLazyContent(page);
+      await settleNetwork(page, 250, 2_500);
+    }
     return;
   }
-  await settleNetwork(page, 350, 6_000);
+  await settleNetwork(page, 350, 5_000);
   await revealLazyContent(page);
-  await settleNetwork(page, 350, 6_000);
+  await settleNetwork(page, 350, 5_000);
 }
 
 async function settleNetwork(

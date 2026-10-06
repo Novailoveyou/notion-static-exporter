@@ -14,6 +14,7 @@ import {
   downloadAssetUrls,
   ensureParentDir,
   findRemainingRemoteUrls,
+  htmlHasEmptyMediaShells,
   injectBlockMedia,
   enrichBookmarkCovers,
   rewriteCssFiles,
@@ -548,7 +549,7 @@ async function scrapeOnePage(
     ? "index.html"
     : `${pageFileStem(title.replace(/\s*\|\s*Notion$/i, "").trim() || "page", pageId)}.html`;
 
-  // Fast path: same fingerprint + previous HTML available
+  // Fast path: same fingerprint + previous HTML available + media complete
   if (
     !full &&
     cached &&
@@ -557,41 +558,33 @@ async function scrapeOnePage(
     cached.fingerprint === fingerprint &&
     ensureCachedPageInStaging(liveOut, outRoot, cached.file)
   ) {
-    // Re-scrape when multi-view tabs exist but captures are missing
-    // (Table/Gallery switching is dead without them).
     const stagedHtml = join(outRoot, cached.file);
-    if (!pageNeedsCollectionViewRecapture(stagedHtml)) {
-      // Always re-harvest live links — fingerprint can miss virtualized cards
-      // that still expose hrefs while scrolled into view.
-      setPhase("links", `${label} · verify`);
-      const liveLinks = await collectSameSiteLinks(page, url);
-      const cachedKeys = new Set(
-        (cached.links || [])
-          .map((l) => pageKey(l))
-          .filter((k): k is string => Boolean(k)),
-      );
-      const newLinks = liveLinks.filter((l) => {
-        const k = pageKey(l);
-        return Boolean(k && !cachedKeys.has(k));
-      });
-      if (newLinks.length === 0) {
-        collector.detach();
-        rememberPagePath(pageUrlMap, url, cached.file);
-        setPhase("links", `${label} · cache hit`);
-        const merged = [...new Set([...(cached.links || []), ...liveLinks])];
-        for (const link of merged) {
-          enqueueIfNew(state, link, url);
-        }
-        onProgress?.();
-        nextCache.pages[key] = {
-          url,
-          file: cached.file,
-          fingerprint,
-          links: merged,
-        };
-        return "skipped";
+    let cachedHtml = "";
+    try {
+      cachedHtml = readFileSync(stagedHtml, "utf8");
+    } catch {
+      cachedHtml = "";
+    }
+    // Never reuse incomplete HTML — empty figures/audio are incorrect
+    if (cachedHtml && htmlHasEmptyMediaShells(cachedHtml)) {
+      note(`${label} · incomplete media in cache · re-scrape`);
+    } else if (!pageNeedsCollectionViewRecapture(stagedHtml)) {
+      // Fingerprint already scrolled collections; reuse cached links when set matches
+      collector.detach();
+      rememberPagePath(pageUrlMap, url, cached.file);
+      setPhase("links", `${label} · cache hit`);
+      const links = [...new Set(cached.links || [])];
+      for (const link of links) {
+        enqueueIfNew(state, link, url);
       }
-      note(`${label} · +${newLinks.length} new link(s) · re-scrape`);
+      onProgress?.();
+      nextCache.pages[key] = {
+        url,
+        file: cached.file,
+        fingerprint,
+        links,
+      };
+      return "skipped";
     } else {
       note(`${label} · re-capture views`);
     }
@@ -622,16 +615,20 @@ async function scrapeOnePage(
   setPhase("toggles", `${label} · nested`);
   await expandAllToggles(page).catch(() => 0);
 
-  // Force-load lazy image/audio while the response collector is still attached
+  // Force-load lazy image/audio while the response collector is still attached.
+  // Retry until live DOM has no empty shells (bounded).
   setPhase("assets", `${label} · media`);
   updateSpinner(label, "assets");
-  const hydratedMedia = await hydrateNotionMedia(page).catch(() => [] as string[]);
-  // Let promoted lazy srcs actually start transferring
-  await settleAfterMedia(page);
-
-  const domAssets = await collectDomAssetUrls(page);
-  await withStoreLock(async () => {
-    await saveCollectedResponses(store, collector.responses);
+  let hydratedMedia: string[] = [];
+  for (let mediaPass = 0; mediaPass < 3; mediaPass++) {
+    const batch = await hydrateNotionMedia(page).catch(() => [] as string[]);
+    hydratedMedia = [...new Set([...hydratedMedia, ...batch])];
+    await settleAfterMedia(page);
+    const domAssets = await collectDomAssetUrls(page);
+    await withStoreLock(async () => {
+      await saveCollectedResponses(store, collector.responses);
+    });
+    // Downloads can run without holding the store lock for the whole transfer
     await downloadAssetUrls(
       store,
       page,
@@ -641,7 +638,29 @@ async function scrapeOnePage(
         if (total > 0) note(`${label} · media ${done}/${total}`);
       },
     );
-  });
+    const emptyLive = await page.evaluate(() => {
+      let n = 0;
+      for (const block of Array.from(
+        document.querySelectorAll(".notion-image-block"),
+      )) {
+        const img = block.querySelector(
+          "img[src]:not([src^='data:'])",
+        ) as HTMLImageElement | null;
+        if (!img) n += 1;
+      }
+      for (const block of Array.from(
+        document.querySelectorAll(".notion-audio-block"),
+      )) {
+        const audio = block.querySelector(
+          "audio[src]:not([src^='data:'])",
+        ) as HTMLAudioElement | null;
+        if (!audio) n += 1;
+      }
+      return n;
+    });
+    if (emptyLive === 0) break;
+    note(`${label} · ${emptyLive} empty media shell(s) · retry hydrate`);
+  }
   collector.detach();
 
   setPhase("links", label);
@@ -667,9 +686,7 @@ async function scrapeOnePage(
   }
   if (leftovers.length) {
     setPhase("assets", `${label} · leftovers`);
-    await withStoreLock(async () => {
-      await downloadAssetUrls(store, page, leftovers);
-    });
+    await downloadAssetUrls(store, page, leftovers);
   }
 
   setPhase("write", label);
@@ -696,6 +713,13 @@ async function scrapeOnePage(
   html = rewriteHtml(html, localPath, url, store, pageUrlMap);
   html = injectBlockMedia(html, store, localPath);
   html = await enrichBookmarkCovers(html, store, localPath);
+
+  // Completeness gate: never publish / fingerprint incomplete media
+  if (htmlHasEmptyMediaShells(html)) {
+    throw new Error(
+      `Incomplete media after scrape (${label}) — empty image/audio shells remain`,
+    );
+  }
 
   const abs = join(outRoot, localPath);
   ensureParentDir(abs);

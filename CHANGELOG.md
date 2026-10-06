@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.12
+
+- Never cache-hit or publish pages with empty image/audio shells; retry hydrate
+  until media is complete
+- Faster sync: skip redundant scrolls on lesson pages / cache hits; adaptive
+  collection-view waits; lower example CI delay (`800ms`) and raise concurrency
+- Peek Loading… fixes: fetch timeout, `cache: no-store`, history ignore counter
+- Service worker: network-first for audio / Range requests
+- Emoji spritesheet imgs → unicode spans; fix icon color CSS
+- Mobile: zero stacked layout padding / safe-padding gutters
+
 ## 1.0.3
 
 - Default page open mode is fullscreen; ⋮ menu can change default view

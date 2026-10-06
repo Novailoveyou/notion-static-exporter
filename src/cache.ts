@@ -119,47 +119,56 @@ export async function pageFingerprint(page: Page): Promise<string> {
 
     harvest();
 
-    for (const scroller of Array.from(
-      document.querySelectorAll(".notion-scroller"),
-    ) as HTMLElement[]) {
-      const maxX = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
-      const maxY = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-      const stepX = Math.max(160, Math.floor(scroller.clientWidth * 0.75) || 160);
-      const stepY = Math.max(160, Math.floor(scroller.clientHeight * 0.75) || 160);
-      if (maxX > 0) {
-        for (let x = 0; x <= maxX + stepX; x += stepX) {
-          scroller.scrollLeft = Math.min(x, maxX);
-          await delay(45);
-          harvest();
-        }
-        scroller.scrollLeft = 0;
-      }
-      if (maxY > 0) {
-        for (let y = 0; y <= maxY + stepY; y += stepY) {
-          scroller.scrollTop = Math.min(y, maxY);
-          await delay(45);
-          harvest();
-        }
-        scroller.scrollTop = 0;
-      }
-    }
+    const hasCollections = Boolean(
+      document.querySelector(
+        ".notion-collection_view-block, .notion-collection_view_page-block, .notion-gallery-view, .notion-table-view, .notion-list-view, .notion-board-view",
+      ),
+    );
 
-    const height = () =>
-      Math.max(
-        document.body?.scrollHeight || 0,
-        document.documentElement?.scrollHeight || 0,
-      );
-    let prev = 0;
-    for (let i = 0; i < 20; i++) {
-      const h = height();
-      if (h <= prev) break;
-      prev = h;
-      window.scrollTo(0, h);
-      await delay(60);
+    // Only scroll when collections virtualize off-screen cards
+    if (hasCollections) {
+      for (const scroller of Array.from(
+        document.querySelectorAll(".notion-scroller"),
+      ) as HTMLElement[]) {
+        const maxX = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+        const maxY = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        const stepX = Math.max(160, Math.floor(scroller.clientWidth * 0.75) || 160);
+        const stepY = Math.max(160, Math.floor(scroller.clientHeight * 0.75) || 160);
+        if (maxX > 0) {
+          for (let x = 0; x <= maxX + stepX; x += stepX) {
+            scroller.scrollLeft = Math.min(x, maxX);
+            await delay(40);
+            harvest();
+          }
+          scroller.scrollLeft = 0;
+        }
+        if (maxY > 0) {
+          for (let y = 0; y <= maxY + stepY; y += stepY) {
+            scroller.scrollTop = Math.min(y, maxY);
+            await delay(40);
+            harvest();
+          }
+          scroller.scrollTop = 0;
+        }
+      }
+
+      const height = () =>
+        Math.max(
+          document.body?.scrollHeight || 0,
+          document.documentElement?.scrollHeight || 0,
+        );
+      let prev = 0;
+      for (let i = 0; i < 16; i++) {
+        const h = height();
+        if (h <= prev) break;
+        prev = h;
+        window.scrollTo(0, h);
+        await delay(50);
+        harvest();
+      }
+      window.scrollTo(0, 0);
       harvest();
     }
-    window.scrollTo(0, 0);
-    harvest();
 
     const root =
       document.querySelector("main#main") ||

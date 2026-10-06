@@ -726,6 +726,30 @@ export function findRemainingRemoteUrls(html: string, baseUrl?: string): string[
   return [...out];
 }
 
+/**
+ * Count image/audio blocks whose figures still lack a real media src.
+ * Empty shells are never valid scrape output.
+ */
+export function countEmptyMediaShellsInHtml(html: string): number {
+  let empty = 0;
+  const re =
+    /<div\b[^>]*data-block-id="([^"]+)"[^>]*notion-(audio|image)-block[^>]*>([\s\S]*?)(<\/div>\s*<\/div>\s*<\/div>)/gi;
+  for (const m of html.matchAll(re)) {
+    const kind = (m[2] || "").toLowerCase();
+    const mid = (m[3] || "") + (m[4] || "");
+    if (kind === "audio") {
+      if (!/<audio\b[^>]*\bsrc=["'](?!data:)[^"'\s>]+/i.test(mid)) empty += 1;
+    } else if (!/<img\b[^>]*\bsrc=["'](?!data:)[^"'\s>]+/i.test(mid)) {
+      empty += 1;
+    }
+  }
+  return empty;
+}
+
+export function htmlHasEmptyMediaShells(html: string): boolean {
+  return countEmptyMediaShellsInHtml(html) > 0;
+}
+
 /** Map Notion block UUID (32-hex) → best local audio/image asset path. */
 export function buildBlockAssetIndex(
   entries: Iterable<[string, string]>,
@@ -956,8 +980,11 @@ export async function enrichBookmarkCovers(
 
   const starts: number[] = [];
   const startRe = /<div\b[^>]*notion-bookmark-block[^>]*>/gi;
-  let sm: RegExpExecArray | null;
-  while ((sm = startRe.exec(html))) starts.push(sm.index);
+  let sm = startRe.exec(html);
+  while (sm) {
+    starts.push(sm.index);
+    sm = startRe.exec(html);
+  }
   if (!starts.length) return html;
 
   type Patch = { start: number; end: number; chunk: string };
