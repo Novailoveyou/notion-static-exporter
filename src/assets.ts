@@ -894,7 +894,7 @@ async function fetchOgImageUrl(pageUrl: string): Promise<string | null> {
     const res = await fetch(pageUrl, {
       headers: {
         "user-agent":
-          "Mozilla/5.0 (compatible; notion-static-exporter/1.0; +https://github.com/Novailoveyou/notion-pages-exporter)",
+          "Mozilla/5.0 (compatible; notion-static-exporter/1.0; +https://github.com/Novailoveyou/notion-static-exporter)",
         accept: "text/html,application/xhtml+xml",
       },
       redirect: "follow",

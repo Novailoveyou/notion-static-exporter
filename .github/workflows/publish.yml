@@ -1,0 +1,47 @@
+# Publish to npm via OIDC trusted publishing (no long-lived NPM_TOKEN).
+# Configure Trusted Publisher on npmjs.com → package → Access first.
+# Then: bump version, commit, tag (v1.0.13), push tags — or use workflow_dispatch.
+#
+# Bun is used for install/build (matches this repo). The publish step uses npm
+# because npm OIDC trusted publishing requires the npm CLI (11.5.1+).
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for npm OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      # Node/npm only for registry OIDC publish (trusted publishing)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Publish
+        run: npm publish --access public
