@@ -1,5 +1,7 @@
 # notion-static-exporter
 
+[![npm](https://img.shields.io/npm/v/notion-static-exporter)](https://www.npmjs.com/package/notion-static-exporter)
+
 Scrapes a public Notion page into static files — no Notion API token.
 
 Original: https://almond-brownie-c82.notion.site/Elementary-3b515e0e4a098053bb74c985cebfd777  
