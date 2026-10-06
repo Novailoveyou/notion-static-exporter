@@ -867,11 +867,18 @@ export async function freezeNotionPage(page: Page): Promise<string> {
     }
     await delay(400);
 
-    // Convert Notion emoji spritesheet imgs → unicode spans (spritesheets aren't mirrored)
+    // Convert Notion emoji spritesheet imgs → unicode spans (spritesheets aren't mirrored).
+    // Alt is often "🟧 Page icon" — never put the "Page icon" label into visible text.
+    const emojiGlyphFromAlt = (alt: string) => {
+      let g = (alt || "").trim();
+      g = g.replace(/\s*Page\s*icon\s*/gi, "").trim();
+      return g;
+    };
     for (const img of Array.from(
       document.querySelectorAll("img.notion-emoji"),
     ) as HTMLImageElement[]) {
-      const glyph = (img.getAttribute("alt") || "").trim();
+      const rawAlt = (img.getAttribute("alt") || "").trim();
+      const glyph = emojiGlyphFromAlt(rawAlt);
       if (!glyph) continue;
       const span = document.createElement("span");
       span.className = "notion-emoji";
@@ -887,6 +894,13 @@ export async function freezeNotionPage(page: Page): Promise<string> {
         (h ? `height:${h};font-size:${h};` : "") +
         (st.includes("vertical-align") ? "vertical-align:-0.1em;" : "");
       img.replaceWith(span);
+    }
+    // Strip "Page icon" from remaining icon img alts (broken-image fallback text)
+    for (const img of Array.from(
+      document.querySelectorAll('img[alt*="Page icon"], img[alt*="Page Icon"]'),
+    ) as HTMLImageElement[]) {
+      const cleaned = emojiGlyphFromAlt(img.getAttribute("alt") || "");
+      img.setAttribute("alt", cleaned || "");
     }
 
     for (const img of Array.from(document.querySelectorAll("img"))) {
