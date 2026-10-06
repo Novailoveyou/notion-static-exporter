@@ -43,7 +43,7 @@ Sync options:
   --keep-cname        Preserve existing CNAME in --out
   --max-pages <n>     Safety cap (0 = unlimited, default)
   --delay-ms <n>      Pause between pages (default 500)
-  --concurrency <n>   Parallel browser tabs (default 4)
+  --concurrency <n>   Parallel browser tabs (default 12)
   --retries <n>       Retries per page on CF block (default 3)
   --user-data-dir <p> Chrome profile dir (keeps cf_clearance cookies)
   --headed            Show Chromium (helps pass hard Cloudflare challenges)
@@ -197,7 +197,7 @@ async function main(): Promise<void> {
   );
   const concurrency = Number(
     flagValue(argv, "concurrency") ??
-      (config.concurrency !== undefined ? String(config.concurrency) : "4"),
+      (config.concurrency !== undefined ? String(config.concurrency) : "12"),
   );
   const userDataDir =
     flagValue(argv, "user-data-dir") ||

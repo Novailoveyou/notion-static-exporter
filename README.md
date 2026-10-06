@@ -160,7 +160,7 @@ Needs **Actions: Read and write**; optional **Pages: Read** for deploy status.
 - `--keep-cname` — keep existing `CNAME` across sync
 - `--max-pages <n>` — safety cap (`0` = unlimited)
 - `--delay-ms <n>` — pause between pages (default `1500`)
-- `--concurrency <n>` — parallel browser tabs (default `3`)
+- `--concurrency <n>` — parallel browser tabs (default `12`)
 - `--retries <n>` — retries when Cloudflare blocks (default `3`)
 - `--user-data-dir <path>` — Chrome profile (keeps CF cookies)
 - `--headed` — show Chromium (helps pass hard challenges)

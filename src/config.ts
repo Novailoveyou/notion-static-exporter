@@ -40,7 +40,7 @@ export const exampleConfigJson = `{
   "keepCname": true,
   "maxPages": 0,
   "delayMs": 800,
-  "concurrency": 4,
+  "concurrency": 12,
   "maxRetries": 3
 }
 `;

@@ -60,7 +60,7 @@ jobs:
             --keep-cname \
             --delay-ms 800 \
             --retries 4 \
-            --concurrency 4
+            --concurrency 12
 
       - name: Commit & push
         run: |

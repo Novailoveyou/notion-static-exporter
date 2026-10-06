@@ -88,7 +88,7 @@ export type SyncOptions = {
   userDataDir?: string;
   delayMs?: number;
   maxRetries?: number;
-  /** Parallel browser pages. Default 4 */
+  /** Parallel browser pages. Default 12 */
   concurrency?: number;
   /** Ignore fingerprints and re-scrape every page */
   full?: boolean;
@@ -163,7 +163,7 @@ export async function syncNotionSite(opts: SyncOptions): Promise<SyncResult> {
   const maxPages = opts.maxPages && opts.maxPages > 0 ? opts.maxPages : Infinity;
   const delayMs = opts.delayMs ?? 500;
   const maxRetries = opts.maxRetries ?? 3;
-  const concurrency = Math.max(1, opts.concurrency ?? 4);
+  const concurrency = Math.max(1, opts.concurrency ?? 12);
   const retries = new Map<string, number>();
   const gateNav = createNavGate(delayMs);
 
