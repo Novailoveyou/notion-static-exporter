@@ -426,9 +426,9 @@ function remainingCount(state: CrawlState): number {
 /** Brief settle after hydrateNotionMedia promotes lazy srcs into real requests. */
 async function settleAfterMedia(page: Page): Promise<void> {
   try {
-    await page.waitForNetworkIdle({ idleTime: 400, timeout: 5_000 });
+    await page.waitForNetworkIdle({ idleTime: 280, timeout: 3_500 });
   } catch {
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 250));
   }
 }
 
@@ -530,7 +530,7 @@ async function scrapeOnePage(
 
   // Light wait first — enough to fingerprint / decide cache hit
   setPhase("content", label);
-  await waitForNotionContent(page, { deep: false });
+  const shallow = await waitForNotionContent(page, { deep: false });
   if (await isChallengePage(page)) {
     collector.detach();
     throw new Error("Still on Cloudflare challenge");
@@ -590,14 +590,17 @@ async function scrapeOnePage(
     }
   }
 
-  // Full settle only when we must re-scrape
+  // Full settle only when we must re-scrape (skip 2nd scroll if shallow already did)
   setPhase("content", `${label} · deep`);
-  await waitForNotionContent(page, { deep: true });
+  await waitForNotionContent(page, {
+    deep: true,
+    skipReveal: shallow.revealed,
+  });
 
   // Expand toggles (STUDENT A/B etc.) with real clicks so nested content loads
   setPhase("toggles", label);
   updateSpinner(label, "toggles");
-  await expandAllToggles(page).catch(() => 0);
+  const togglesOpened = await expandAllToggles(page).catch(() => 0);
 
   setPhase("views", label);
   updateSpinner(label, "views");
@@ -611,9 +614,11 @@ async function scrapeOnePage(
     );
   }
 
-  // Nested toggles can appear after the first pass / view switches
-  setPhase("toggles", `${label} · nested`);
-  await expandAllToggles(page).catch(() => 0);
+  // Nested toggles can appear after view switches — only re-run if we opened some
+  if (togglesOpened > 0 || collectionViews.length > 0) {
+    setPhase("toggles", `${label} · nested`);
+    await expandAllToggles(page).catch(() => 0);
+  }
 
   // Force-load lazy image/audio while the response collector is still attached.
   // Retry until live DOM has no empty shells (bounded).
@@ -633,7 +638,7 @@ async function scrapeOnePage(
       store,
       page,
       [...collector.urls, ...domAssets, ...hydratedMedia],
-      6,
+      12,
       (done, total) => {
         if (total > 0) note(`${label} · media ${done}/${total}`);
       },

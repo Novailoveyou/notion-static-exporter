@@ -51,23 +51,23 @@ export async function revealLazyContent(page: Page): Promise<void> {
     const scrollElement = async (el: HTMLElement) => {
       const maxX = Math.max(0, el.scrollWidth - el.clientWidth);
       const maxY = Math.max(0, el.scrollHeight - el.clientHeight);
-      const stepX = Math.max(160, Math.floor(el.clientWidth * 0.75) || 160);
-      const stepY = Math.max(160, Math.floor(el.clientHeight * 0.75) || 160);
+      const stepX = Math.max(180, Math.floor(el.clientWidth * 0.8) || 180);
+      const stepY = Math.max(180, Math.floor(el.clientHeight * 0.8) || 180);
       if (maxX > 0) {
         for (let x = 0; x <= maxX + stepX; x += stepX) {
           el.scrollLeft = Math.min(x, maxX);
-          await delay(70);
+          await delay(45);
         }
         el.scrollLeft = 0;
-        await delay(40);
+        await delay(25);
       }
       if (maxY > 0) {
         for (let y = 0; y <= maxY + stepY; y += stepY) {
           el.scrollTop = Math.min(y, maxY);
-          await delay(70);
+          await delay(45);
         }
         el.scrollTop = 0;
-        await delay(40);
+        await delay(25);
       }
     };
 
@@ -83,15 +83,15 @@ export async function revealLazyContent(page: Page): Promise<void> {
         document.documentElement?.scrollHeight || 0,
       );
     let prev = 0;
-    for (let i = 0; i < 28; i++) {
+    for (let i = 0; i < 24; i++) {
       const h = height();
       if (h <= prev) break;
       prev = h;
       window.scrollTo(0, h);
-      await delay(100);
+      await delay(60);
     }
     window.scrollTo(0, 0);
-    await delay(120);
+    await delay(60);
   });
 }
 
@@ -197,7 +197,7 @@ export async function collectSameSiteLinks(
       if (maxX > 0) {
         for (let x = 0; x <= maxX + stepX; x += stepX) {
           scroller.scrollLeft = Math.min(x, maxX);
-          await delay(55);
+          await delay(35);
           harvest();
         }
         scroller.scrollLeft = 0;
@@ -205,7 +205,7 @@ export async function collectSameSiteLinks(
       if (maxY > 0) {
         for (let y = 0; y <= maxY + stepY; y += stepY) {
           scroller.scrollTop = Math.min(y, maxY);
-          await delay(55);
+          await delay(35);
           harvest();
         }
         scroller.scrollTop = 0;
@@ -219,16 +219,16 @@ export async function collectSameSiteLinks(
         document.documentElement?.scrollHeight || 0,
       );
     let prev = 0;
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 20; i++) {
       const h = height();
       if (h <= prev) break;
       prev = h;
       window.scrollTo(0, h);
-      await delay(80);
+      await delay(50);
       harvest();
     }
     window.scrollTo(0, 0);
-    await delay(80);
+    await delay(40);
     harvest();
 
     return [...out];
@@ -244,8 +244,8 @@ export async function collectSameSiteLinks(
 
 export async function waitForNotionContent(
   page: Page,
-  opts: { deep?: boolean } = {},
-): Promise<void> {
+  opts: { deep?: boolean; skipReveal?: boolean } = {},
+): Promise<{ revealed: boolean }> {
   const deep = opts.deep !== false;
   await waitForLiveNotionUi(page);
 
@@ -273,7 +273,7 @@ export async function waitForNotionContent(
             ).length > 0
           );
         },
-        { timeout: 20_000 },
+        { timeout: 12_000 },
       )
       .catch(() => {
         /* page may have empty DBs — continue */
@@ -281,17 +281,24 @@ export async function waitForNotionContent(
   }
 
   if (!deep) {
-    await settleNetwork(page, 350, 3_500);
+    await settleNetwork(page, 280, 2_500);
     // Only scroll for fingerprint/link discovery when collections virtualize cards
     if (hasCollections) {
       await revealLazyContent(page);
-      await settleNetwork(page, 250, 2_500);
+      await settleNetwork(page, 200, 2_000);
+      return { revealed: true };
     }
-    return;
+    return { revealed: false };
   }
-  await settleNetwork(page, 350, 5_000);
-  await revealLazyContent(page);
-  await settleNetwork(page, 350, 5_000);
+
+  // Deep settle — skip a second full scroll when shallow already revealed
+  await settleNetwork(page, 280, 3_500);
+  if (!opts.skipReveal) {
+    await revealLazyContent(page);
+    await settleNetwork(page, 280, 3_500);
+    return { revealed: true };
+  }
+  return { revealed: false };
 }
 
 async function settleNetwork(

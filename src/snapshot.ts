@@ -361,27 +361,27 @@ export async function expandAllToggles(page: Page): Promise<number> {
             /* ignore */
           }
         });
-        await btn.click({ delay: 15 });
+        await btn.click({ delay: 10 });
         passOpened += 1;
         opened += 1;
         // Wait until this control reports open, or give up quickly
         await page
           .waitForFunction(
             (el) => el.getAttribute("aria-expanded") === "true",
-            { timeout: 1200 },
+            { timeout: 800 },
             btn,
           )
           .catch(() => null);
-        await new Promise((r) => setTimeout(r, 150));
+        await new Promise((r) => setTimeout(r, 80));
       } catch {
         /* overlay / detached — continue */
       }
     }
 
     try {
-      await page.waitForNetworkIdle({ idleTime: 250, timeout: 2_500 });
+      await page.waitForNetworkIdle({ idleTime: 200, timeout: 1_800 });
     } catch {
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 120));
     }
 
     const after = await page.evaluate(
@@ -393,9 +393,9 @@ export async function expandAllToggles(page: Page): Promise<number> {
 
   // Final settle so nested media requests can start
   try {
-    await page.waitForNetworkIdle({ idleTime: 300, timeout: 3_000 });
+    await page.waitForNetworkIdle({ idleTime: 220, timeout: 2_000 });
   } catch {
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 120));
   }
   return opened;
 }
@@ -554,7 +554,7 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
       ) as HTMLElement | null;
       if (btn) btn.click();
     }
-    await delay(400);
+    await delay(200);
 
     const processedBlocks = new Set<string>();
 
@@ -577,7 +577,7 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
         } catch {
           /* ignore */
         }
-        await delay(60);
+        await delay(30);
 
         const isMounted = () =>
           Boolean(
@@ -601,9 +601,9 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
             /* ignore */
           }
           // Wait for Notion to mount real media after scroll/click
-          const deadline = Date.now() + 1800;
+          const deadline = Date.now() + 1000;
           while (Date.now() < deadline && !isMounted()) {
-            await delay(120);
+            await delay(80);
           }
         }
 
@@ -702,7 +702,7 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
       if (maxX > 0) {
         for (let x = 0; x <= maxX + stepX; x += stepX) {
           scroller.scrollLeft = Math.min(x, maxX);
-          await delay(55);
+          await delay(35);
           harvestDomMedia();
           mediaBlocks = await processMediaBlocks(true);
         }
@@ -711,7 +711,7 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
       if (maxY > 0) {
         for (let y = 0; y <= maxY + stepY; y += stepY) {
           scroller.scrollTop = Math.min(y, maxY);
-          await delay(55);
+          await delay(35);
           harvestDomMedia();
           mediaBlocks = await processMediaBlocks(true);
         }
@@ -725,17 +725,17 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
         document.documentElement?.scrollHeight || 0,
       );
     let prevH = 0;
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 20; i++) {
       const h = pageHeight();
       if (h <= prevH) break;
       prevH = h;
       window.scrollTo(0, h);
-      await delay(70);
+      await delay(45);
       harvestDomMedia();
       mediaBlocks = await processMediaBlocks(true);
     }
     window.scrollTo(0, 0);
-    await delay(100);
+    await delay(50);
     mediaBlocks = await processMediaBlocks(true);
     harvestDomMedia();
 
@@ -841,7 +841,7 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
     }
 
     // Give browsers a moment to start fetching promoted lazy srcs
-    await delay(500);
+    await delay(200);
     harvestDomMedia();
     return [...found];
   });

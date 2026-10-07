@@ -41,8 +41,8 @@ notion-static-exporter sync \
 | `--out` | `.` | Output directory |
 | `--keep-cname` | off | Keep existing `CNAME` in `--out` |
 | `--max-pages` | `0` (unlimited) | Safety cap on pages |
-| `--delay-ms` | `500` | Pause between navigations |
-| `--concurrency` | `12` | Parallel browser tabs |
+| `--delay-ms` | `500` | Global pause between navigations (all workers share one gate; lower = faster, higher = safer vs Cloudflare) |
+| `--concurrency` | `12` | Parallel browser tabs (16 is usually fine in CI; 24+ rarely helps with high delay) |
 | `--retries` | `3` | Retries when Cloudflare blocks |
 | `--user-data-dir` | `~/.notion-static-exporter/chrome-profile` | Chrome profile (CF cookies) |
 | `--headed` | off | Show Chromium (helps hard challenges) |
@@ -66,8 +66,8 @@ bunx notion-static-exporter init-config
   "out": "./_site",
   "keepCname": true,
   "maxPages": 0,
-  "delayMs": 800,
-  "concurrency": 12,
+  "delayMs": 400,
+  "concurrency": 16,
   "maxRetries": 3
 }
 ```
