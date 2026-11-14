@@ -1054,6 +1054,20 @@ export async function freezeNotionPage(page: Page): Promise<string> {
     )) {
       el.remove();
     }
+    // Drop analytics / ad beacons (gtag, doubleclick, Twitter ads, etc.)
+    const trackerRe =
+      /googleads\.g\.doubleclick\.net|googletagmanager\.com|google-analytics\.com|static\.ads-twitter\.com|ads-twitter\.com|analytics\.twitter\.com|connect\.facebook\.net|facebook\.com\/tr/i;
+    for (const el of Array.from(
+      document.querySelectorAll(
+        "script[src], iframe[src], img[src], link[href], source[src], embed[src]",
+      ),
+    )) {
+      const u =
+        (el as HTMLElement).getAttribute("src") ||
+        (el as HTMLElement).getAttribute("href") ||
+        "";
+      if (u && trackerRe.test(u)) el.remove();
+    }
 
     for (const sel of [
       ".notion-overlay-container",

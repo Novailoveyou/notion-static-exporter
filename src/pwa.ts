@@ -95,22 +95,43 @@ export function writePwaAssets(
 
 /** Service worker: precache on install, cache-first for same-origin, network fallback. */
 const SERVICE_WORKER_JS = `/* nsp service worker */
-const CACHE = "nsp-static-v9";
+const CACHE = "nsp-static-v10";
+const PRECACHE_CONCURRENCY = 4;
+
+async function mapPool(items, limit, fn) {
+  const list = Array.isArray(items) ? items : [];
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, Math.max(list.length, 1)) }, async () => {
+    while (i < list.length) {
+      const idx = i++;
+      try { await fn(list[idx], idx); } catch (_) {}
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function cacheUrls(urls, opts) {
+  const cache = await caches.open(CACHE);
+  const mode = (opts && opts.reload) ? "reload" : "default";
+  await mapPool(urls, PRECACHE_CONCURRENCY, async (url) => {
+    if (!url || typeof url !== "string") return;
+    try {
+      // Never pull third-party analytics through the SW
+      if (/googletagmanager|google-analytics|doubleclick|ads-twitter|facebook\\.net|facebook\\.com\\/tr/i.test(url)) {
+        return;
+      }
+      const r = await fetch(url, { cache: mode });
+      if (r && r.ok) await cache.put(url, r);
+    } catch (_) {}
+  });
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     try {
       const res = await fetch("./assets/nsp-precache.json", { cache: "no-cache" });
       const list = await res.json();
-      const cache = await caches.open(CACHE);
-      await Promise.all(
-        list.map(async (url) => {
-          try {
-            const r = await fetch(url, { cache: "reload" });
-            if (r.ok) await cache.put(url, r);
-          } catch (_) {}
-        }),
-      );
+      await cacheUrls(list, { reload: true });
     } catch (_) {}
     await self.skipWaiting();
   })());
@@ -188,17 +209,7 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "NSP_CACHE_URLS") {
     const urls = event.data.urls || [];
-    event.waitUntil((async () => {
-      const cache = await caches.open(CACHE);
-      await Promise.all(
-        urls.map(async (url) => {
-          try {
-            const r = await fetch(url, { cache: "reload" });
-            if (r.ok) await cache.put(url, r);
-          } catch (_) {}
-        }),
-      );
-    })());
+    event.waitUntil(cacheUrls(urls, { reload: false }));
   }
 });
 `;

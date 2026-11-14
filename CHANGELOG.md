@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.16
+
+- Fix `ERR_INSUFFICIENT_RESOURCES` on GitHub Pages: throttle service-worker
+  precache (concurrency 4), warm only the current page's assets instead of the
+  full site list on every load
+- Retry failed image/audio/video loads (queued, exponential backoff)
+- Image skeleton placeholder while media is pending
+- Native `loading="lazy"` on content images
+- Strip analytics/ad beacons (gtag, doubleclick, Twitter ads, etc.)
+
 ## 1.0.12
 
 - Never cache-hit or publish pages with empty image/audio shells; retry hydrate

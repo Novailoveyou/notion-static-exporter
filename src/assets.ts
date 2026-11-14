@@ -621,7 +621,33 @@ export function rewriteHtml(
     return originalSlots[Number(i)] ?? "";
   });
 
+  out = stripTrackerTags(out);
+  out = ensureImgLazyLoading(out);
+
   return out;
+}
+
+/** Drop analytics / ad beacons so static hosts never hit them. */
+export function stripTrackerTags(html: string): string {
+  const tracker =
+    /googleads\.g\.doubleclick\.net|googletagmanager\.com|google-analytics\.com|static\.ads-twitter\.com|ads-twitter\.com|analytics\.twitter\.com|connect\.facebook\.net|facebook\.com\/tr/i;
+  let out = html.replace(
+    /<script\b[^>]*\bsrc=["'][^"']*["'][^>]*>\s*<\/script>/gi,
+    (tag) => (tracker.test(tag) ? "" : tag),
+  );
+  out = out.replace(/<(?:img|iframe|link|source|embed)\b[^>]*>/gi, (tag) =>
+    tracker.test(tag) ? "" : tag,
+  );
+  return out;
+}
+
+/** Native lazy-load so Chrome doesn't open every image socket at once. */
+export function ensureImgLazyLoading(html: string): string {
+  return html.replace(/<img\b([^>]*)>/gi, (full, attrs: string) => {
+    if (/\bloading\s*=/i.test(attrs)) return full;
+    if (/notion-emoji/i.test(attrs) || /src=["']data:/i.test(attrs)) return full;
+    return `<img loading="lazy" decoding="async"${attrs.startsWith(" ") ? attrs : ` ${attrs}`}>`;
+  });
 }
 
 /** Fix <a href="#"> using the enclosing element's data-block-id when it matches a scraped page. */

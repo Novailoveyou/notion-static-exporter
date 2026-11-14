@@ -1162,6 +1162,7 @@ export const RUNTIME_JS = `(() => {
       }
       table.style.maxWidth = "none";
     }
+    enhanceMediaResilience(root);
   }
 
   let assetMap = null;
@@ -1339,6 +1340,170 @@ export const RUNTIME_JS = `(() => {
         apply(again);
       }
     });
+  }
+
+  /* ── Resilient media loading (retries + skeletons) ───────── */
+  const TRACKER_RE =
+    /googleads\\.g\\.doubleclick\\.net|googletagmanager\\.com|google-analytics\\.com|static\\.ads-twitter\\.com|ads-twitter\\.com|analytics\\.twitter\\.com|connect\\.facebook\\.net|facebook\\.com\\/tr/i;
+  const MEDIA_RETRY_MAX = 6;
+  const MEDIA_RETRY_BASE_MS = 350;
+  const mediaRetryQueue = [];
+  let mediaRetryActive = 0;
+  const MEDIA_RETRY_CONCURRENCY = 3;
+
+  function stripAnalyticsDom(scope) {
+    const root = scope || document;
+    for (const el of $$(
+      "script[src], iframe[src], img[src], link[href], source[src], embed[src]",
+      root,
+    )) {
+      const u = el.getAttribute("src") || el.getAttribute("href") || "";
+      if (u && TRACKER_RE.test(u)) {
+        try { el.remove(); } catch (_) {}
+      }
+    }
+  }
+
+  function cleanMediaSrc(src) {
+    if (!src) return "";
+    try {
+      const u = new URL(src, location.href);
+      u.searchParams.delete("nsp_r");
+      return u.pathname + (u.search || "") + (u.hash || "");
+    } catch {
+      return String(src).replace(/([?&])nsp_r=\\d+/g, "").replace(/[?&]$/, "");
+    }
+  }
+
+  function drainMediaRetryQueue() {
+    while (mediaRetryActive < MEDIA_RETRY_CONCURRENCY && mediaRetryQueue.length) {
+      const job = mediaRetryQueue.shift();
+      mediaRetryActive += 1;
+      Promise.resolve()
+        .then(job)
+        .catch(() => {})
+        .finally(() => {
+          mediaRetryActive -= 1;
+          drainMediaRetryQueue();
+        });
+    }
+  }
+
+  function enqueueMediaRetry(fn, delayMs) {
+    const run = () =>
+      new Promise((resolve) => {
+        setTimeout(() => {
+          try { fn(); } catch (_) {}
+          resolve();
+        }, delayMs);
+      });
+    mediaRetryQueue.push(run);
+    drainMediaRetryQueue();
+  }
+
+  function markMediaLoaded(el) {
+    if (!el) return;
+    el.setAttribute("data-nsp-loaded", "1");
+    el.classList.remove("nsp-media-pending");
+  }
+
+  function markMediaPending(el) {
+    if (!el) return;
+    if (el.getAttribute("data-nsp-loaded") === "1") return;
+    if (el.complete && el.naturalWidth > 0) {
+      markMediaLoaded(el);
+      return;
+    }
+    el.classList.add("nsp-media-pending");
+  }
+
+  function reloadMediaSrc(el) {
+    const raw = el.getAttribute("src") || el.currentSrc || "";
+    if (!raw || raw.indexOf("data:") === 0) return;
+    const base = cleanMediaSrc(raw);
+    // Re-assign same URL (no cache-bust) so SW/browser cache can still help
+    el.removeAttribute("src");
+    try { void el.offsetWidth; } catch (_) {}
+    el.setAttribute("src", base);
+    if (el.tagName === "AUDIO" || el.tagName === "VIDEO") {
+      try { el.load(); } catch (_) {}
+    }
+  }
+
+  function wireMediaRetry(el) {
+    if (!el || el.dataset.nspRetryWired === "1") return;
+    el.dataset.nspRetryWired = "1";
+    el.dataset.nspRetryCount = el.dataset.nspRetryCount || "0";
+
+    const scheduleRetry = (reason) => {
+      const n = Number(el.dataset.nspRetryCount || "0");
+      if (n >= MEDIA_RETRY_MAX) return;
+      el.dataset.nspRetryCount = String(n + 1);
+      el.removeAttribute("data-nsp-loaded");
+      markMediaPending(el);
+      const delay =
+        MEDIA_RETRY_BASE_MS * Math.pow(2, Math.min(n, 4)) +
+        Math.floor(Math.random() * 250);
+      enqueueMediaRetry(() => reloadMediaSrc(el), delay);
+    };
+
+    el.addEventListener("load", () => markMediaLoaded(el));
+    el.addEventListener("loadeddata", () => markMediaLoaded(el));
+    el.addEventListener("canplay", () => markMediaLoaded(el));
+    el.addEventListener("error", () => scheduleRetry("error"));
+    el.addEventListener("stalled", () => {
+      if (el.tagName === "AUDIO" || el.tagName === "VIDEO") scheduleRetry("stalled");
+    });
+
+    if (el.tagName === "IMG") {
+      markMediaPending(el);
+      if (el.complete && el.naturalWidth > 0) markMediaLoaded(el);
+    }
+
+    if (el.tagName === "AUDIO" || el.tagName === "VIDEO") {
+      const nativePlay = el.play.bind(el);
+      el.play = function nspPlay() {
+        return nativePlay().catch((err) => {
+          scheduleRetry("play");
+          return new Promise((resolve, reject) => {
+            const onReady = () => {
+              el.removeEventListener("canplay", onReady);
+              nativePlay().then(resolve, reject);
+            };
+            el.addEventListener("canplay", onReady, { once: true });
+            setTimeout(() => {
+              el.removeEventListener("canplay", onReady);
+              nativePlay().then(resolve, reject);
+            }, 1200);
+          });
+        });
+      };
+    }
+  }
+
+  function enhanceMediaResilience(scope) {
+    const root = scope || document;
+    for (const img of $$(
+      [
+        ".notion-image-block img",
+        ".notion-page-content img",
+        "[data-nsp-peek-body] img",
+        ".nsp-peek-content img",
+        ".notion-collection-item img",
+        ".notion-gallery-view img",
+      ].join(", "),
+      root,
+    )) {
+      const src = img.getAttribute("src") || "";
+      if (!src || src.indexOf("data:") === 0) continue;
+      if (img.closest(".notion-bookmark-block")) continue;
+      if (!img.getAttribute("loading")) img.setAttribute("loading", "lazy");
+      if (!img.getAttribute("decoding")) img.setAttribute("decoding", "async");
+      wireMediaRetry(img);
+    }
+    for (const media of $$("audio[src], video[src]", root)) {
+      wireMediaRetry(media);
+    }
   }
 
   function collectLightboxImages(fromImg) {
@@ -1810,6 +1975,32 @@ export const RUNTIME_JS = `(() => {
         width: 100% !important;
         pointer-events: auto !important;
       }
+      /* Image loading skeleton — only while pending, skip gallery covers */
+      @keyframes nsp-skel {
+        0% { background-position: 100% 0; }
+        100% { background-position: -100% 0; }
+      }
+      .notion-image-block img.nsp-media-pending,
+      .notion-page-content > .notion-image-block img:not([data-nsp-loaded]) {
+        background-image: linear-gradient(
+          90deg,
+          rgba(127,127,127,.12) 0%,
+          rgba(127,127,127,.22) 45%,
+          rgba(127,127,127,.12) 90%
+        ) !important;
+        background-size: 200% 100% !important;
+        animation: nsp-skel 1.25s ease-in-out infinite !important;
+        min-height: 96px;
+      }
+      .notion-image-block img[data-nsp-loaded],
+      .notion-collection-item img,
+      .notion-gallery-view img,
+      .notion-bookmark-block img,
+      .notion-emoji,
+      img.notion-emoji {
+        animation: none !important;
+        min-height: 0 !important;
+      }
       .notion-table-view, .notion-scroller.horizontal {
         overflow-x: auto !important;
         max-width: 100%;
@@ -2162,6 +2353,29 @@ export const RUNTIME_JS = `(() => {
   }
 
   /* ── PWA ───────────────────────────────────────────────── */
+  function warmVisiblePageAssets() {
+    if (!("serviceWorker" in navigator)) return;
+    const urls = [];
+    for (const el of $$("img[src], audio[src], video[src], source[src], link[rel='stylesheet'][href]")) {
+      const u = el.currentSrc || el.getAttribute("src") || el.href || "";
+      if (!u || u.indexOf("data:") === 0) continue;
+      if (TRACKER_RE.test(u)) continue;
+      try {
+        const abs = new URL(u, location.href);
+        if (abs.origin === location.origin) urls.push(abs.href);
+      } catch (_) {}
+    }
+    if (!urls.length) return;
+    navigator.serviceWorker.ready.then((reg) => {
+      if (reg.active) {
+        reg.active.postMessage({
+          type: "NSP_CACHE_URLS",
+          urls: Array.from(new Set(urls)),
+        });
+      }
+    }).catch(() => {});
+  }
+
   function registerPwa() {
     if (!("serviceWorker" in navigator)) return;
     const swUrl = new URL("sw.js", location.href);
@@ -2171,14 +2385,10 @@ export const RUNTIME_JS = `(() => {
       navigator.serviceWorker.register(swUrl.href).catch(() => {});
     });
 
-    // Ask SW to refresh precache list after load
-    navigator.serviceWorker.ready.then(async (reg) => {
-      try {
-        const res = await fetch("./assets/nsp-precache.json", { cache: "no-cache" });
-        const urls = await res.json();
-        reg.active && reg.active.postMessage({ type: "NSP_CACHE_URLS", urls });
-      } catch (_) {}
-    });
+    // Warm only this page's assets (throttled in SW) — never re-fetch the full site list
+    const warm = () => warmVisiblePageAssets();
+    if (document.readyState === "complete") setTimeout(warm, 800);
+    else window.addEventListener("load", () => setTimeout(warm, 800), { once: true });
   }
 
   /* ── Side peek ─────────────────────────────────────────── */
@@ -2542,6 +2752,7 @@ export const RUNTIME_JS = `(() => {
 
   function boot() {
     injectStyles();
+    stripAnalyticsDom(document);
     try {
       applyTheme(currentTheme());
     } catch (_) {}
