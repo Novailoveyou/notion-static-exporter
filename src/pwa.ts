@@ -93,10 +93,17 @@ export function writePwaAssets(
   return { files: files.length };
 }
 
-/** Service worker: precache on install, network-first shell, cache-first media. */
+/** Service worker: tiny shell precache, network-first shell, cache-on-demand media. */
 const SERVICE_WORKER_JS = `/* nsp service worker */
-const CACHE = "nsp-static-v11";
-const PRECACHE_CONCURRENCY = 4;
+const CACHE = "nsp-static-v12";
+const PRECACHE_CONCURRENCY = 3;
+/* Only the app shell — never the full site list (that caused network spam). */
+const SHELL = [
+  "./index.html",
+  "./assets/nsp-runtime.js",
+  "./manifest.webmanifest",
+  "./assets/nsp-icon.svg",
+];
 
 async function mapPool(items, limit, fn) {
   const list = Array.isArray(items) ? items : [];
@@ -118,7 +125,7 @@ async function cacheUrls(urls, opts) {
     if (!url || typeof url !== "string") return;
     try {
       // Never pull third-party analytics through the SW
-      if (/googletagmanager|google-analytics|doubleclick|ads-twitter|facebook\\.net|facebook\\.com\\/tr/i.test(url)) {
+      if (/googletagmanager|google-analytics|doubleclick|ads-twitter|facebook\\.net|facebook\\.com\\/tr|aif\\.notion\\.so/i.test(url)) {
         return;
       }
       // Skip already-cached URLs unless install explicitly reloads
@@ -146,11 +153,8 @@ function isShellRequest(req, url) {
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    try {
-      const res = await fetch("./assets/nsp-precache.json", { cache: "no-cache" });
-      const list = await res.json();
-      await cacheUrls(list, { reload: true });
-    } catch (_) {}
+    // Precache shell only — page assets are cached on demand as the user visits
+    await cacheUrls(SHELL, { reload: true });
     await self.skipWaiting();
   })());
 });

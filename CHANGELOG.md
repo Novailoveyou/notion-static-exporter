@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.19
+
+- Hide frozen Notion `app.notion.com (Error 429)` overlays that cover fine local images
+- SW no longer precaches the whole site on install (shell only); warm only current-page assets
+
 ## 1.0.18
 
 - Stop retry spam: no retry after success, ignore synthetic src-clear errors,

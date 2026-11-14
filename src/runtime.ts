@@ -1433,31 +1433,50 @@ export const RUNTIME_JS = `(() => {
   }
 
   const IMAGE_FAIL_MSG_RE =
-    /this image couldn['’]t be loaded|couldn['’]t load (the )?image|image failed to load|не удалось загрузить/i;
+    /this image couldn['’]t be loaded|couldn['’]t load (the )?image|image failed to load|не удалось загрузить|app\\.notion\\.com\\s*\\(Error\\s*\\d+\\)|Error\\s*429/i;
 
-  /** Hide Notion's frozen "This image couldn't be loaded." once the real img is OK. */
+  /** Hide Notion's frozen scrape-time error overlay (429 etc.) once the real img is OK. */
   function clearFailedImagePlaceholder(el) {
     if (!el || el.tagName !== "IMG") return;
+    const src = el.getAttribute("src") || "";
+    const localOk =
+      mediaIsOk(el) ||
+      /^\\.\\//.test(src) ||
+      /^assets\\//.test(src) ||
+      el.getAttribute("data-nsp-loaded") === "1";
+    if (!localOk && !mediaIsOk(el)) return;
     const block = el.closest(".notion-image-block") || el.parentElement;
     if (!block) return;
     block.removeAttribute("data-nsp-img-failed");
+    // Notion freezes an absolute overlay with svg.photoExclamation + "Error 429"
+    for (const icon of $$("svg.photoExclamation", block)) {
+      const overlay =
+        icon.closest('div[style*="position: absolute"]') ||
+        icon.closest('div[style*="position:absolute"]') ||
+        icon.parentElement;
+      if (!overlay || overlay === block) continue;
+      overlay.setAttribute("data-nsp-img-error", "1");
+      overlay.style.setProperty("display", "none", "important");
+    }
     for (const node of $$("*", block)) {
       if (node === el || node.contains(el) || el.contains(node)) continue;
-      if (node.matches("img, audio, video, button, a, svg, source")) continue;
+      if (node.matches("img, audio, video, button, svg, source")) continue;
       const t = (node.textContent || "").replace(/\\s+/g, " ").trim();
-      if (!t || t.length > 120) continue;
+      if (!t) continue;
       if (!IMAGE_FAIL_MSG_RE.test(t)) continue;
-      // Only hide tight wrappers that are basically just the error sentence
-      if (t.replace(IMAGE_FAIL_MSG_RE, "").trim().length > 20) continue;
-      node.setAttribute("data-nsp-img-error", "1");
-      node.style.display = "none";
+      const overlay =
+        node.closest('div[style*="position: absolute"]') ||
+        node.closest('div[style*="position:absolute"]') ||
+        (t.length < 160 ? node : null);
+      if (!overlay || overlay === block) continue;
+      overlay.setAttribute("data-nsp-img-error", "1");
+      overlay.style.setProperty("display", "none", "important");
     }
-    // Broken <img alt="This image couldn't be loaded."> left beside a good one
     for (const img of $$("img", block)) {
       if (img === el) continue;
       const alt = img.getAttribute("alt") || "";
-      const src = img.getAttribute("src") || "";
-      if (IMAGE_FAIL_MSG_RE.test(alt) || !src || src.indexOf("data:image/gif") === 0) {
+      const s = img.getAttribute("src") || "";
+      if (IMAGE_FAIL_MSG_RE.test(alt) || !s || s.indexOf("data:image/gif") === 0) {
         if (!img.complete || img.naturalWidth === 0) {
           img.setAttribute("data-nsp-img-error", "1");
           img.style.display = "none";
@@ -1503,12 +1522,22 @@ export const RUNTIME_JS = `(() => {
     }
     const raw = el.getAttribute("src") || el.currentSrc || "";
     if (!raw || raw.indexOf("data:") === 0) return;
-    const base = cleanMediaSrc(raw);
+    // Prefer local ./assets over Notion CDN (remote 429 overlays / rate limits)
+    let next = "";
+    const block = el.closest("[data-block-id]");
+    if (block) {
+      const kind = el.tagName === "AUDIO" || el.tagName === "VIDEO" ? "audio" : "image";
+      next = localAssetForBlock(block.getAttribute("data-block-id"), kind) || "";
+    }
+    if (!next) next = localAssetFor(raw) || "";
+    if (!next) next = cleanMediaSrc(raw);
+    if (!next) return;
     // Ignore the synthetic error from clearing src before re-assign
     el.dataset.nspIgnoreError = "1";
     el.removeAttribute("src");
+    el.removeAttribute("srcset");
     try { void el.offsetWidth; } catch (_) {}
-    el.setAttribute("src", base);
+    el.setAttribute("src", next);
     if (el.tagName === "AUDIO" || el.tagName === "VIDEO") {
       try { el.load(); } catch (_) {}
     }
@@ -1608,6 +1637,10 @@ export const RUNTIME_JS = `(() => {
       if (!img.getAttribute("loading")) img.setAttribute("loading", "lazy");
       if (!img.getAttribute("decoding")) img.setAttribute("decoding", "async");
       wireMediaRetry(img);
+      // Local assets still carry scrape-time Notion 429 overlays — strip them
+      if (/^\\.\\//.test(src) || /^assets\\//.test(src) || mediaIsOk(img)) {
+        clearFailedImagePlaceholder(img);
+      }
     }
     for (const media of $$("audio[src], video[src]", root)) {
       wireMediaRetry(media);
@@ -2134,8 +2167,15 @@ export const RUNTIME_JS = `(() => {
         z-index: 2;
       }
       .notion-image-block [data-nsp-img-error],
-      .notion-image-block:has(img[data-nsp-loaded]) [data-nsp-img-error] {
+      .notion-image-block:has(img[data-nsp-loaded]) [data-nsp-img-error],
+      /* Frozen Notion 429 overlay sits on top of a fine local <img> */
+      .notion-image-block:has(img[src^="./"], img[src^="assets/"], img[data-nsp-loaded])
+        div:has(> svg.photoExclamation),
+      .notion-image-block:has(img[src^="./"], img[src^="assets/"], img[data-nsp-loaded])
+        svg.photoExclamation {
         display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
       }
       .notion-table-view, .notion-scroller.horizontal {
         overflow-x: auto !important;
@@ -2489,6 +2529,35 @@ export const RUNTIME_JS = `(() => {
   }
 
   /* ── PWA ───────────────────────────────────────────────── */
+  /** Ask SW to cache only assets already referenced on this page (skip if cached). */
+  function warmCurrentPageAssets() {
+    if (!("serviceWorker" in navigator)) return;
+    const urls = [];
+    for (const el of $$(
+      "img[src], audio[src], video[src], source[src], link[rel='stylesheet'][href]",
+    )) {
+      const u = el.currentSrc || el.getAttribute("src") || el.href || "";
+      if (!u || u.indexOf("data:") === 0) continue;
+      if (TRACKER_RE.test(u)) continue;
+      if (/^https?:/i.test(u) && u.indexOf(location.origin) !== 0) continue;
+      try {
+        const abs = new URL(u, location.href);
+        if (abs.origin === location.origin) urls.push(abs.href);
+      } catch (_) {}
+    }
+    if (!urls.length) return;
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        if (reg.active) {
+          reg.active.postMessage({
+            type: "NSP_CACHE_URLS",
+            urls: Array.from(new Set(urls)),
+          });
+        }
+      })
+      .catch(() => {});
+  }
+
   function registerPwa() {
     if (!("serviceWorker" in navigator)) return;
     const swUrl = new URL("sw.js", location.href);
@@ -2512,6 +2581,10 @@ export const RUNTIME_JS = `(() => {
           try { reg.update(); } catch (_) {}
         }, 15 * 60 * 1000);
       }
+      // Warm only this page's assets after load (SW skips already-cached)
+      const warm = () => warmCurrentPageAssets();
+      if (document.readyState === "complete") setTimeout(warm, 1200);
+      else window.addEventListener("load", () => setTimeout(warm, 1200), { once: true });
     };
 
     navigator.serviceWorker.register(rootSw.href).then(afterReg).catch(() => {

@@ -950,9 +950,10 @@ export async function freezeNotionPage(page: Page): Promise<string> {
       }
     }
 
-    // Drop Notion's "This image couldn't be loaded." when a real <img> is present
+    // Drop Notion scrape-time error overlays (429 / "couldn't be loaded") when
+    // a real <img> is present — otherwise the overlay covers a fine local asset.
     const failMsgRe =
-      /this image couldn['’]t be loaded|couldn['’]t load (the )?image|image failed to load|не удалось загрузить/i;
+      /this image couldn['’]t be loaded|couldn['’]t load (the )?image|image failed to load|не удалось загрузить|app\.notion\.com\s*\(Error\s*\d+\)|Error\s*429/i;
     for (const block of Array.from(
       document.querySelectorAll(".notion-image-block"),
     )) {
@@ -960,20 +961,36 @@ export async function freezeNotionPage(page: Page): Promise<string> {
         "img[src]:not([src^='data:'])",
       ) as HTMLImageElement | null;
       if (!okImg) continue;
+      for (const icon of Array.from(
+        block.querySelectorAll("svg.photoExclamation"),
+      )) {
+        const overlay =
+          (icon as HTMLElement).closest(
+            'div[style*="position: absolute"], div[style*="position:absolute"]',
+          ) || icon.parentElement;
+        if (overlay && overlay !== block) overlay.remove();
+      }
       for (const node of Array.from(block.querySelectorAll("*"))) {
         if (node === okImg || node.contains(okImg) || okImg.contains(node)) {
           continue;
         }
-        if (
-          node.matches("img, audio, video, button, a, svg, source, picture")
-        ) {
+        if (node.matches("img, audio, video, button, svg, source, picture")) {
           continue;
         }
         const t = (node.textContent || "").replace(/\s+/g, " ").trim();
-        if (!t || t.length > 120 || !failMsgRe.test(t)) continue;
-        if (t.replace(failMsgRe, "").trim().length > 20) continue;
-        node.remove();
+        if (!t || !failMsgRe.test(t)) continue;
+        const overlay =
+          (node as HTMLElement).closest(
+            'div[style*="position: absolute"], div[style*="position:absolute"]',
+          ) || (t.length < 160 ? node : null);
+        if (overlay && overlay !== block) overlay.remove();
       }
+    }
+    // Drop Notion AI/analytics iframe left in freezes
+    for (const el of Array.from(
+      document.querySelectorAll("iframe[src*='aif.notion.so']"),
+    )) {
+      el.remove();
     }
 
     // Collapse toggles for default closed UI, but keep children in the DOM.
