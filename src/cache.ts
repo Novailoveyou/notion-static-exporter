@@ -93,8 +93,9 @@ export function snapshotAssets(store: AssetStore): Record<string, string> {
  * Light content fingerprint after Notion has rendered.
  * Avoids re-freezing / re-downloading when the page body is unchanged.
  *
- * Accumulates block ids / collection item ids while scrolling scrollers —
- * Notion virtualizes gallery cards, so a single snapshot misses new items.
+ * Always scrolls while harvesting block ids — since ~Oct 2026 Notion
+ * virtualizes regular page blocks (not only gallery cards). A single
+ * above-the-fold snapshot fingerprints truncated pages and sticks in cache.
  */
 export async function pageFingerprint(page: Page): Promise<string> {
   const raw = await page.evaluate(async () => {
@@ -119,56 +120,60 @@ export async function pageFingerprint(page: Page): Promise<string> {
 
     harvest();
 
-    const hasCollections = Boolean(
-      document.querySelector(
-        ".notion-collection_view-block, .notion-collection_view_page-block, .notion-gallery-view, .notion-table-view, .notion-list-view, .notion-board-view",
-      ),
-    );
-
-    // Only scroll when collections virtualize off-screen cards
-    if (hasCollections) {
-      for (const scroller of Array.from(
-        document.querySelectorAll(".notion-scroller"),
-      ) as HTMLElement[]) {
-        const maxX = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
-        const maxY = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-        const stepX = Math.max(160, Math.floor(scroller.clientWidth * 0.75) || 160);
-        const stepY = Math.max(160, Math.floor(scroller.clientHeight * 0.75) || 160);
-        if (maxX > 0) {
-          for (let x = 0; x <= maxX + stepX; x += stepX) {
-            scroller.scrollLeft = Math.min(x, maxX);
-            await delay(40);
-            harvest();
-          }
-          scroller.scrollLeft = 0;
+    for (const scroller of Array.from(
+      document.querySelectorAll(".notion-scroller"),
+    ) as HTMLElement[]) {
+      const maxX = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      const maxY = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const stepX = Math.max(160, Math.floor(scroller.clientWidth * 0.75) || 160);
+      const stepY = Math.max(160, Math.floor(scroller.clientHeight * 0.75) || 160);
+      if (maxX > 0) {
+        for (let x = 0; x <= maxX + stepX; x += stepX) {
+          scroller.scrollLeft = Math.min(x, maxX);
+          await delay(35);
+          harvest();
         }
-        if (maxY > 0) {
-          for (let y = 0; y <= maxY + stepY; y += stepY) {
-            scroller.scrollTop = Math.min(y, maxY);
-            await delay(40);
-            harvest();
-          }
-          scroller.scrollTop = 0;
+        scroller.scrollLeft = 0;
+      }
+      if (maxY > 0) {
+        for (let y = 0; y <= maxY + stepY; y += stepY) {
+          scroller.scrollTop = Math.min(y, maxY);
+          await delay(35);
+          harvest();
         }
+        scroller.scrollTop = 0;
       }
-
-      const height = () =>
-        Math.max(
-          document.body?.scrollHeight || 0,
-          document.documentElement?.scrollHeight || 0,
-        );
-      let prev = 0;
-      for (let i = 0; i < 16; i++) {
-        const h = height();
-        if (h <= prev) break;
-        prev = h;
-        window.scrollTo(0, h);
-        await delay(50);
-        harvest();
-      }
-      window.scrollTo(0, 0);
-      harvest();
     }
+
+    const height = () =>
+      Math.max(
+        document.body?.scrollHeight || 0,
+        document.documentElement?.scrollHeight || 0,
+        (document.querySelector(".notion-page-content") as HTMLElement | null)
+          ?.scrollHeight || 0,
+      );
+    const step = Math.max(140, Math.floor(window.innerHeight * 0.55) || 140);
+    let maxY = height();
+    let prevCount = allIds.size;
+    let stable = 0;
+    for (let pass = 0; pass < 2; pass++) {
+      maxY = height();
+      for (let y = 0; y <= maxY + step; y += step) {
+        window.scrollTo(0, Math.min(y, height()));
+        await delay(40);
+        harvest();
+        maxY = Math.max(maxY, height());
+      }
+      if (allIds.size === prevCount) {
+        stable += 1;
+        if (stable >= 2) break;
+      } else {
+        stable = 0;
+        prevCount = allIds.size;
+      }
+    }
+    window.scrollTo(0, 0);
+    harvest();
 
     const root =
       document.querySelector("main#main") ||

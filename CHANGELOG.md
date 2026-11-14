@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.22
+
+- Fix truncated lesson pages (e.g. content stops at Exercise 3): Notion’s new
+  page virtualization unmounts off-screen blocks — scroll accumulates blocks and
+  re-injects them before freeze; fingerprints always scroll so bad cache hits
+  no longer stick
+
 ## 1.0.20
 
 - Restore 1.0.18 service-worker caching (full throttled install precache) — shell-only
