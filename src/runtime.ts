@@ -1401,33 +1401,120 @@ export const RUNTIME_JS = `(() => {
     drainMediaRetryQueue();
   }
 
+  function hideMediaRefreshBtn(el) {
+    const host =
+      el.closest(".notion-image-block, .notion-audio-block, .notion-video-block") ||
+      el.parentElement;
+    if (!host) return;
+    for (const btn of $$("[data-nsp-refresh]", host)) btn.remove();
+  }
+
+  function showMediaRefreshBtn(el) {
+    const host =
+      el.closest(".notion-image-block, .notion-audio-block, .notion-video-block") ||
+      el.parentElement;
+    if (!host || host.querySelector("[data-nsp-refresh]")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("data-nsp-refresh", "1");
+    btn.textContent = "Обновить";
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      el.dataset.nspRetryCount = "0";
+      el.dataset.nspRetrying = "";
+      el.removeAttribute("data-nsp-loaded");
+      hideMediaRefreshBtn(el);
+      markMediaPending(el);
+      reloadMediaSrc(el);
+    });
+    host.appendChild(btn);
+  }
+
+  const IMAGE_FAIL_MSG_RE =
+    /this image couldn['’]t be loaded|couldn['’]t load (the )?image|image failed to load|не удалось загрузить/i;
+
+  /** Hide Notion's frozen "This image couldn't be loaded." once the real img is OK. */
+  function clearFailedImagePlaceholder(el) {
+    if (!el || el.tagName !== "IMG") return;
+    const block = el.closest(".notion-image-block") || el.parentElement;
+    if (!block) return;
+    block.removeAttribute("data-nsp-img-failed");
+    for (const node of $$("*", block)) {
+      if (node === el || node.contains(el) || el.contains(node)) continue;
+      if (node.matches("img, audio, video, button, a, svg, source")) continue;
+      const t = (node.textContent || "").replace(/\\s+/g, " ").trim();
+      if (!t || t.length > 120) continue;
+      if (!IMAGE_FAIL_MSG_RE.test(t)) continue;
+      // Only hide tight wrappers that are basically just the error sentence
+      if (t.replace(IMAGE_FAIL_MSG_RE, "").trim().length > 20) continue;
+      node.setAttribute("data-nsp-img-error", "1");
+      node.style.display = "none";
+    }
+    // Broken <img alt="This image couldn't be loaded."> left beside a good one
+    for (const img of $$("img", block)) {
+      if (img === el) continue;
+      const alt = img.getAttribute("alt") || "";
+      const src = img.getAttribute("src") || "";
+      if (IMAGE_FAIL_MSG_RE.test(alt) || !src || src.indexOf("data:image/gif") === 0) {
+        if (!img.complete || img.naturalWidth === 0) {
+          img.setAttribute("data-nsp-img-error", "1");
+          img.style.display = "none";
+        }
+      }
+    }
+  }
+
   function markMediaLoaded(el) {
     if (!el) return;
     el.setAttribute("data-nsp-loaded", "1");
+    el.dataset.nspRetrying = "";
+    el.dataset.nspRetryCount = "0";
     el.classList.remove("nsp-media-pending");
+    hideMediaRefreshBtn(el);
+    clearFailedImagePlaceholder(el);
   }
 
   function markMediaPending(el) {
     if (!el) return;
     if (el.getAttribute("data-nsp-loaded") === "1") return;
-    if (el.complete && el.naturalWidth > 0) {
+    if (el.tagName === "IMG" && el.complete && el.naturalWidth > 0) {
       markMediaLoaded(el);
       return;
     }
     el.classList.add("nsp-media-pending");
   }
 
+  function mediaIsOk(el) {
+    if (!el) return false;
+    if (el.getAttribute("data-nsp-loaded") === "1") return true;
+    if (el.tagName === "IMG") return !!(el.complete && el.naturalWidth > 0);
+    if (el.tagName === "AUDIO" || el.tagName === "VIDEO") {
+      return el.readyState >= 2 && !el.error;
+    }
+    return false;
+  }
+
   function reloadMediaSrc(el) {
+    if (mediaIsOk(el)) {
+      markMediaLoaded(el);
+      return;
+    }
     const raw = el.getAttribute("src") || el.currentSrc || "";
     if (!raw || raw.indexOf("data:") === 0) return;
     const base = cleanMediaSrc(raw);
-    // Re-assign same URL (no cache-bust) so SW/browser cache can still help
+    // Ignore the synthetic error from clearing src before re-assign
+    el.dataset.nspIgnoreError = "1";
     el.removeAttribute("src");
     try { void el.offsetWidth; } catch (_) {}
     el.setAttribute("src", base);
     if (el.tagName === "AUDIO" || el.tagName === "VIDEO") {
       try { el.load(); } catch (_) {}
     }
+    setTimeout(() => {
+      try { delete el.dataset.nspIgnoreError; } catch (_) {}
+    }, 50);
   }
 
   function wireMediaRetry(el) {
@@ -1435,36 +1522,57 @@ export const RUNTIME_JS = `(() => {
     el.dataset.nspRetryWired = "1";
     el.dataset.nspRetryCount = el.dataset.nspRetryCount || "0";
 
-    const scheduleRetry = (reason) => {
+    const scheduleRetry = () => {
+      if (mediaIsOk(el)) {
+        markMediaLoaded(el);
+        return;
+      }
+      if (el.dataset.nspIgnoreError === "1") return;
+      if (el.dataset.nspRetrying === "1") return;
       const n = Number(el.dataset.nspRetryCount || "0");
-      if (n >= MEDIA_RETRY_MAX) return;
+      if (n >= MEDIA_RETRY_MAX) {
+        el.dataset.nspRetrying = "";
+        markMediaPending(el);
+        showMediaRefreshBtn(el);
+        return;
+      }
       el.dataset.nspRetryCount = String(n + 1);
+      el.dataset.nspRetrying = "1";
       el.removeAttribute("data-nsp-loaded");
       markMediaPending(el);
       const delay =
         MEDIA_RETRY_BASE_MS * Math.pow(2, Math.min(n, 4)) +
         Math.floor(Math.random() * 250);
-      enqueueMediaRetry(() => reloadMediaSrc(el), delay);
+      enqueueMediaRetry(() => {
+        if (mediaIsOk(el)) {
+          markMediaLoaded(el);
+          return;
+        }
+        el.dataset.nspRetrying = "";
+        reloadMediaSrc(el);
+      }, delay);
     };
 
     el.addEventListener("load", () => markMediaLoaded(el));
     el.addEventListener("loadeddata", () => markMediaLoaded(el));
-    el.addEventListener("canplay", () => markMediaLoaded(el));
-    el.addEventListener("error", () => scheduleRetry("error"));
-    el.addEventListener("stalled", () => {
-      if (el.tagName === "AUDIO" || el.tagName === "VIDEO") scheduleRetry("stalled");
-    });
+    el.addEventListener("canplaythrough", () => markMediaLoaded(el));
+    el.addEventListener("error", () => scheduleRetry());
+    // Do not auto-retry on "stalled" — it fires often on healthy audio and spams network
 
     if (el.tagName === "IMG") {
       markMediaPending(el);
-      if (el.complete && el.naturalWidth > 0) markMediaLoaded(el);
+      if (mediaIsOk(el)) markMediaLoaded(el);
     }
 
     if (el.tagName === "AUDIO" || el.tagName === "VIDEO") {
       const nativePlay = el.play.bind(el);
       el.play = function nspPlay() {
         return nativePlay().catch((err) => {
-          scheduleRetry("play");
+          const name = (err && err.name) || "";
+          // User gesture / pause aborts are not load failures
+          if (name === "AbortError" || name === "NotAllowedError") throw err;
+          if (mediaIsOk(el)) return nativePlay();
+          scheduleRetry();
           return new Promise((resolve, reject) => {
             const onReady = () => {
               el.removeEventListener("canplay", onReady);
@@ -2001,6 +2109,34 @@ export const RUNTIME_JS = `(() => {
         animation: none !important;
         min-height: 0 !important;
       }
+      [data-nsp-refresh] {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        margin-top: 8px;
+        padding: 6px 12px;
+        border: 1px solid rgba(127,127,127,.35);
+        border-radius: 6px;
+        background: rgba(127,127,127,.08);
+        color: inherit;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1.2;
+        cursor: pointer !important;
+        pointer-events: auto !important;
+      }
+      [data-nsp-refresh]:hover {
+        background: rgba(127,127,127,.16);
+      }
+      .notion-image-block [data-nsp-refresh],
+      .notion-audio-block [data-nsp-refresh] {
+        position: relative;
+        z-index: 2;
+      }
+      .notion-image-block [data-nsp-img-error],
+      .notion-image-block:has(img[data-nsp-loaded]) [data-nsp-img-error] {
+        display: none !important;
+      }
       .notion-table-view, .notion-scroller.horizontal {
         overflow-x: auto !important;
         max-width: 100%;
@@ -2353,42 +2489,34 @@ export const RUNTIME_JS = `(() => {
   }
 
   /* ── PWA ───────────────────────────────────────────────── */
-  function warmVisiblePageAssets() {
-    if (!("serviceWorker" in navigator)) return;
-    const urls = [];
-    for (const el of $$("img[src], audio[src], video[src], source[src], link[rel='stylesheet'][href]")) {
-      const u = el.currentSrc || el.getAttribute("src") || el.href || "";
-      if (!u || u.indexOf("data:") === 0) continue;
-      if (TRACKER_RE.test(u)) continue;
-      try {
-        const abs = new URL(u, location.href);
-        if (abs.origin === location.origin) urls.push(abs.href);
-      } catch (_) {}
-    }
-    if (!urls.length) return;
-    navigator.serviceWorker.ready.then((reg) => {
-      if (reg.active) {
-        reg.active.postMessage({
-          type: "NSP_CACHE_URLS",
-          urls: Array.from(new Set(urls)),
-        });
-      }
-    }).catch(() => {});
-  }
-
   function registerPwa() {
     if (!("serviceWorker" in navigator)) return;
     const swUrl = new URL("sw.js", location.href);
     // All pages live flat in the site root
     const rootSw = new URL("./sw.js", location.href.replace(/[^/]*$/, ""));
-    navigator.serviceWorker.register(rootSw.href).catch(() => {
-      navigator.serviceWorker.register(swUrl.href).catch(() => {});
+
+    // When a new SW takes control, reload once so HTML/runtime are not stale
+    let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloading) return;
+      reloading = true;
+      location.reload();
     });
 
-    // Warm only this page's assets (throttled in SW) — never re-fetch the full site list
-    const warm = () => warmVisiblePageAssets();
-    if (document.readyState === "complete") setTimeout(warm, 800);
-    else window.addEventListener("load", () => setTimeout(warm, 800), { once: true });
+    const afterReg = (reg) => {
+      if (!reg) return;
+      try { reg.update(); } catch (_) {}
+      // Periodic check so deploys show up without requiring incognito
+      if (!window.__nspSwUpdateTimer) {
+        window.__nspSwUpdateTimer = setInterval(() => {
+          try { reg.update(); } catch (_) {}
+        }, 15 * 60 * 1000);
+      }
+    };
+
+    navigator.serviceWorker.register(rootSw.href).then(afterReg).catch(() => {
+      navigator.serviceWorker.register(swUrl.href).then(afterReg).catch(() => {});
+    });
   }
 
   /* ── Side peek ─────────────────────────────────────────── */

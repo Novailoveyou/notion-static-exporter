@@ -950,6 +950,32 @@ export async function freezeNotionPage(page: Page): Promise<string> {
       }
     }
 
+    // Drop Notion's "This image couldn't be loaded." when a real <img> is present
+    const failMsgRe =
+      /this image couldn['’]t be loaded|couldn['’]t load (the )?image|image failed to load|не удалось загрузить/i;
+    for (const block of Array.from(
+      document.querySelectorAll(".notion-image-block"),
+    )) {
+      const okImg = block.querySelector(
+        "img[src]:not([src^='data:'])",
+      ) as HTMLImageElement | null;
+      if (!okImg) continue;
+      for (const node of Array.from(block.querySelectorAll("*"))) {
+        if (node === okImg || node.contains(okImg) || okImg.contains(node)) {
+          continue;
+        }
+        if (
+          node.matches("img, audio, video, button, a, svg, source, picture")
+        ) {
+          continue;
+        }
+        const t = (node.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 120 || !failMsgRe.test(t)) continue;
+        if (t.replace(failMsgRe, "").trim().length > 20) continue;
+        node.remove();
+      }
+    }
+
     // Collapse toggles for default closed UI, but keep children in the DOM.
     // Mark content nodes so the offline runtime can show/hide reliably.
     for (const block of Array.from(

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.18
+
+- Stop retry spam: no retry after success, ignore synthetic src-clear errors,
+  drop stalled auto-retry, skip already-cached warm fetches
+- Show **Обновить** on images/audio that still fail after retries
+- Hide Notion’s “This image couldn't be loaded.” once the real image succeeds
+- New deploys without incognito: bump SW cache to `nsp-static-v11`, network-first
+  for HTML/runtime/sw/manifest, reload once when a new SW takes control
+
 ## 1.0.16
 
 - Fix `ERR_INSUFFICIENT_RESOURCES` on GitHub Pages: throttle service-worker
