@@ -139,13 +139,26 @@ bunx notion-static-exporter sync --url "…" --out ./_site --headed --max-pages 
 
 ## Publish this package (maintainers)
 
+Bump `version` in `package.json`, commit, and push `main`. Then pick **one** of the two publish paths (do not use both for the same version).
+
+**2a. Local publish (npm from your machine)**
+
 ```bash
 npm login
 bun run build
 bun run publish:prod
 ```
 
-Bump `version` in `package.json` before each publish.
+**2b. GitHub Actions publish**
+
+Triggers `.github/workflows/publish.yml` on a `v*` tag (OIDC trusted publishing — no long-lived npm token on your laptop):
+
+```bash
+git tag v1.0.17
+git push origin v1.0.17
+```
+
+Replace `v1.0.17` with the version you bumped to. Pushing the tag alone is enough; you do not also need `bun run publish:prod` for that version.
 
 ## Library
 
