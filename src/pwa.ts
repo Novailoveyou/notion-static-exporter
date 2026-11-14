@@ -93,17 +93,11 @@ export function writePwaAssets(
   return { files: files.length };
 }
 
-/** Service worker: tiny shell precache, network-first shell, cache-on-demand media. */
+/** Service worker: restore 1.0.18 behavior — full install precache (throttled),
+ * network-first shell, cache-first assets. Shell-only install broke page loads. */
 const SERVICE_WORKER_JS = `/* nsp service worker */
-const CACHE = "nsp-static-v12";
-const PRECACHE_CONCURRENCY = 3;
-/* Only the app shell — never the full site list (that caused network spam). */
-const SHELL = [
-  "./index.html",
-  "./assets/nsp-runtime.js",
-  "./manifest.webmanifest",
-  "./assets/nsp-icon.svg",
-];
+const CACHE = "nsp-static-v13";
+const PRECACHE_CONCURRENCY = 4;
 
 async function mapPool(items, limit, fn) {
   const list = Array.isArray(items) ? items : [];
@@ -153,8 +147,11 @@ function isShellRequest(req, url) {
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
-    // Precache shell only — page assets are cached on demand as the user visits
-    await cacheUrls(SHELL, { reload: true });
+    try {
+      const res = await fetch("./assets/nsp-precache.json", { cache: "no-cache" });
+      const list = await res.json();
+      await cacheUrls(list, { reload: true });
+    } catch (_) {}
     await self.skipWaiting();
   })());
 });

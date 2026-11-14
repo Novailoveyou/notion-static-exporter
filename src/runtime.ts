@@ -2529,35 +2529,6 @@ export const RUNTIME_JS = `(() => {
   }
 
   /* ── PWA ───────────────────────────────────────────────── */
-  /** Ask SW to cache only assets already referenced on this page (skip if cached). */
-  function warmCurrentPageAssets() {
-    if (!("serviceWorker" in navigator)) return;
-    const urls = [];
-    for (const el of $$(
-      "img[src], audio[src], video[src], source[src], link[rel='stylesheet'][href]",
-    )) {
-      const u = el.currentSrc || el.getAttribute("src") || el.href || "";
-      if (!u || u.indexOf("data:") === 0) continue;
-      if (TRACKER_RE.test(u)) continue;
-      if (/^https?:/i.test(u) && u.indexOf(location.origin) !== 0) continue;
-      try {
-        const abs = new URL(u, location.href);
-        if (abs.origin === location.origin) urls.push(abs.href);
-      } catch (_) {}
-    }
-    if (!urls.length) return;
-    navigator.serviceWorker.ready
-      .then((reg) => {
-        if (reg.active) {
-          reg.active.postMessage({
-            type: "NSP_CACHE_URLS",
-            urls: Array.from(new Set(urls)),
-          });
-        }
-      })
-      .catch(() => {});
-  }
-
   function registerPwa() {
     if (!("serviceWorker" in navigator)) return;
     const swUrl = new URL("sw.js", location.href);
@@ -2581,10 +2552,6 @@ export const RUNTIME_JS = `(() => {
           try { reg.update(); } catch (_) {}
         }, 15 * 60 * 1000);
       }
-      // Warm only this page's assets after load (SW skips already-cached)
-      const warm = () => warmCurrentPageAssets();
-      if (document.readyState === "complete") setTimeout(warm, 1200);
-      else window.addEventListener("load", () => setTimeout(warm, 1200), { once: true });
     };
 
     navigator.serviceWorker.register(rootSw.href).then(afterReg).catch(() => {

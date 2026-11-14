@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.20
+
+- Restore 1.0.18 service-worker caching (full throttled install precache) — shell-only
+  install in 1.0.19 left pages missing CSS/assets after cache wipe
+- Keep 429 overlay hide; drop per-page warm that competed with page loads
+
 ## 1.0.19
 
 - Hide frozen Notion `app.notion.com (Error 429)` overlays that cover fine local images
