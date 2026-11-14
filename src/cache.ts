@@ -189,7 +189,9 @@ export async function pageFingerprint(page: Page): Promise<string> {
     const title = document.title || "";
     const ids = [...allIds].sort().join(",");
     const cards = [...collectionIds].sort().join(",");
-    return `${title}\n${ids}\n${cards}\n${text}`;
+    // Version tag invalidates fingerprints taken before full-page scroll harvest
+    // (truncated pages used to cache-hit forever).
+    return `nsp-fp-v3\n${title}\n${ids}\n${cards}\n${text}`;
   });
   return createHash("sha256").update(raw).digest("hex");
 }

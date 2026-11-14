@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.23
+
+- Fix truncated lessons for good: Notion unmounts off-screen blocks after every
+  scroll (media/link passes wiped an early restore). Accumulate block HTML into
+  a page store while scrolling; restore only at freeze serialize time in the
+  same evaluate that returns outerHTML; tall scrape viewport; fingerprint v3
+  so old truncated cache hits invalidate
+
 ## 1.0.22
 
 - Fix truncated lesson pages (e.g. content stops at Exercise 3): Notion’s new

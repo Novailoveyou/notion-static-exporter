@@ -45,6 +45,11 @@ import {
   hydrateNotionMedia,
 } from "./snapshot.ts";
 import {
+  accumulateVirtualizedPageBlocks,
+  expandScrapeViewport,
+  restoreDefaultViewport,
+} from "./virtualization.ts";
+import {
   fail,
   info,
   note,
@@ -590,6 +595,10 @@ async function scrapeOnePage(
     }
   }
 
+  // Tall viewport keeps more virtualized page blocks mounted during media/link
+  // passes. Restore default after freeze so the next page starts clean.
+  await expandScrapeViewport(page);
+
   // Full settle only when we must re-scrape (skip 2nd scroll if shallow already did)
   setPhase("content", `${label} · deep`);
   await waitForNotionContent(page, {
@@ -681,7 +690,10 @@ async function scrapeOnePage(
 
   setPhase("freeze", label);
   updateSpinner(label, "freeze");
+  // One more accumulate right before freeze (links/media may have scrolled)
+  await accumulateVirtualizedPageBlocks(page);
   let html = await freezeNotionPage(page);
+  await restoreDefaultViewport(page).catch(() => undefined);
 
   const leftovers = findRemainingRemoteUrls(html, url);
   for (const view of collectionViews) {

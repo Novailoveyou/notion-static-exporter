@@ -1,4 +1,5 @@
 import type { Page } from "puppeteer";
+import { accumulateVirtualizedPageBlocks } from "./virtualization.ts";
 
 export type CollectionViewCapture = {
   blockId: string;
@@ -409,9 +410,16 @@ export async function expandAllToggles(page: Page): Promise<number> {
  * off-screen, and many lesson pages only load images after scroll-into-view.
  */
 export async function hydrateNotionMedia(page: Page): Promise<string[]> {
+  // Ensure block store helpers exist; harvest continues during scroll below.
+  await accumulateVirtualizedPageBlocks(page);
+
   return page.evaluate(async () => {
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const found = new Set<string>();
+    const harvestBlocks = () => {
+      const w = window as Window & { __nspHarvestPageBlocks?: () => number };
+      w.__nspHarvestPageBlocks?.();
+    };
 
     const abs = (u: string | null | undefined) => {
       if (!u || u.startsWith("data:") || u.startsWith("blob:")) return null;
@@ -703,6 +711,7 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
         for (let x = 0; x <= maxX + stepX; x += stepX) {
           scroller.scrollLeft = Math.min(x, maxX);
           await delay(35);
+          harvestBlocks();
           harvestDomMedia();
           mediaBlocks = await processMediaBlocks(true);
         }
@@ -712,10 +721,13 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
         for (let y = 0; y <= maxY + stepY; y += stepY) {
           scroller.scrollTop = Math.min(y, maxY);
           await delay(35);
+          harvestBlocks();
           harvestDomMedia();
           mediaBlocks = await processMediaBlocks(true);
         }
-        scroller.scrollTop = 0;
+        // Leave at bottom — resetting to 0 unmounts page blocks we still need
+        // for later freeze harvest; accumulateVirtualizedPageBlocks will rescan.
+        scroller.scrollTop = maxY;
       }
     }
 
@@ -723,19 +735,22 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
       Math.max(
         document.body?.scrollHeight || 0,
         document.documentElement?.scrollHeight || 0,
+        (document.querySelector(".notion-page-content") as HTMLElement | null)
+          ?.scrollHeight || 0,
       );
-    let prevH = 0;
-    for (let i = 0; i < 20; i++) {
-      const h = pageHeight();
-      if (h <= prevH) break;
-      prevH = h;
-      window.scrollTo(0, h);
+    const step = Math.max(140, Math.floor(window.innerHeight * 0.5) || 140);
+    let maxY = pageHeight();
+    for (let y = 0; y <= maxY + step; y += step) {
+      window.scrollTo(0, Math.min(y, pageHeight()));
       await delay(45);
+      harvestBlocks();
       harvestDomMedia();
       mediaBlocks = await processMediaBlocks(true);
+      maxY = Math.max(maxY, pageHeight());
     }
-    window.scrollTo(0, 0);
+    window.scrollTo(0, pageHeight());
     await delay(50);
+    harvestBlocks();
     mediaBlocks = await processMediaBlocks(true);
     harvestDomMedia();
 
@@ -853,7 +868,14 @@ export async function hydrateNotionMedia(page: Page): Promise<string[]> {
  * leave scripts out (we inject our own offline runtime instead).
  */
 export async function freezeNotionPage(page: Page): Promise<string> {
-  await page.evaluate(async () => {
+  // Final scroll-harvest so the store covers the full lesson (media/link
+  // passes may have scrolled; React unmounts off-screen blocks).
+  await accumulateVirtualizedPageBlocks(page);
+
+  // Restore + serialize in ONE evaluate. Returning outerHTML here (not via a
+  // later page.content()) is critical — any await/round-trip after restore
+  // lets Notion's React reconciler wipe re-injected blocks again.
+  const html = await page.evaluate(async () => {
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     // Best-effort expand for any toggles still closed (primary expand is CDP)
@@ -866,6 +888,25 @@ export async function freezeNotionPage(page: Page): Promise<string> {
       if (btn) btn.click();
     }
     await delay(400);
+
+    // Kill Notion client JS before restore so React cannot schedule a reclaim.
+    for (const el of Array.from(
+      document.querySelectorAll(
+        "script, link[rel='modulepreload'], link[rel='preload'][as='script']",
+      ),
+    )) {
+      el.remove();
+    }
+
+    // LAST await above. Restore full virtualized page from the harvest store
+    // (replaceWith clone — React fiber stays on the detached original), then
+    // only run synchronous DOM prep before returning outerHTML.
+    const w = window as Window & {
+      __nspHarvestPageBlocks?: () => number;
+      __nspRestorePageBlocks?: () => number;
+    };
+    w.__nspHarvestPageBlocks?.();
+    w.__nspRestorePageBlocks?.();
 
     // Convert Notion emoji spritesheet imgs → unicode spans (spritesheets aren't mirrored).
     // Alt is often "🟧 Page icon" — never put the "Page icon" label into visible text.
@@ -1205,10 +1246,10 @@ export async function freezeNotionPage(page: Page): Promise<string> {
     document.body.style.width = "100%";
     document.body.style.maxWidth = "100%";
 
-    await delay(50);
+    return `<!DOCTYPE html>\n${document.documentElement.outerHTML}`;
   });
 
-  return page.content();
+  return html;
 }
 
 /** Wait until the live Notion UI shell + page content are painted. */

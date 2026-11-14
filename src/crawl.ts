@@ -1,6 +1,7 @@
 import type { Page } from "puppeteer";
 import { waitForLiveNotionUi } from "./snapshot.ts";
 import { normalizePageUrl, pageKey } from "./urls.ts";
+import { accumulateVirtualizedPageBlocks } from "./virtualization.ts";
 
 export type CrawlState = {
   queue: string[];
@@ -43,134 +44,12 @@ export function enqueueIfNew(
  * Scroll window + Notion scrollers so virtualized content mounts.
  *
  * Since ~Oct 2026 Notion virtualizes page blocks (not just gallery cards):
- * off-screen blocks leave the DOM. Scrolling to the end then freezing only
- * captures the viewport. We accumulate top-level page blocks while scrolling
- * and re-inject them so the freeze HTML is complete.
+ * off-screen blocks leave the DOM. We only *accumulate* block HTML here —
+ * restore happens at freeze serialize time (see virtualization.ts), because
+ * media/link passes scroll again and React would unmount an early restore.
  */
 export async function revealLazyContent(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-    const pageContent = () =>
-      document.querySelector(".notion-page-content") as HTMLElement | null;
-
-    /** Preserve first-seen HTML for each top-level block (virtualization unmounts). */
-    const accumulated = new Map<string, { html: string; order: number }>();
-    let order = 0;
-
-    const harvestPageBlocks = () => {
-      const root = pageContent();
-      if (!root) return;
-      for (const el of Array.from(root.children) as HTMLElement[]) {
-        const id = el.getAttribute("data-block-id") || "";
-        if (!id) continue;
-        if (accumulated.has(id)) continue;
-        // Skip empty/placeholder shells with no text and no media
-        const hasMedia = Boolean(
-          el.querySelector(
-            "img[src]:not([src^='data:']), audio[src], video[src], iframe[src]",
-          ),
-        );
-        const text = (el.innerText || "").replace(/\s+/g, " ").trim();
-        if (!text && !hasMedia && !el.querySelector("[data-block-id]")) {
-          continue;
-        }
-        accumulated.set(id, { html: el.outerHTML, order: order++ });
-      }
-    };
-
-    const restorePageBlocks = () => {
-      const root = pageContent();
-      if (!root || accumulated.size === 0) return;
-      const sorted = [...accumulated.values()].sort((a, b) => a.order - b.order);
-      // Keep non-block chrome (rare); replace block children with full set
-      const keep: HTMLElement[] = [];
-      for (const el of Array.from(root.children) as HTMLElement[]) {
-        if (!el.getAttribute("data-block-id")) keep.push(el);
-      }
-      root.innerHTML = "";
-      for (const el of keep) root.appendChild(el);
-      const wrap = document.createElement("div");
-      for (const item of sorted) {
-        wrap.innerHTML = item.html;
-        const node = wrap.firstElementChild;
-        if (node) root.appendChild(node);
-      }
-    };
-
-    const scrollElement = async (el: HTMLElement) => {
-      const maxX = Math.max(0, el.scrollWidth - el.clientWidth);
-      const maxY = Math.max(0, el.scrollHeight - el.clientHeight);
-      const stepX = Math.max(160, Math.floor(el.clientWidth * 0.65) || 160);
-      const stepY = Math.max(140, Math.floor(el.clientHeight * 0.55) || 140);
-      if (maxX > 0) {
-        for (let x = 0; x <= maxX + stepX; x += stepX) {
-          el.scrollLeft = Math.min(x, maxX);
-          harvestPageBlocks();
-          await delay(50);
-        }
-        el.scrollLeft = 0;
-        await delay(25);
-      }
-      if (maxY > 0) {
-        for (let y = 0; y <= maxY + stepY; y += stepY) {
-          el.scrollTop = Math.min(y, maxY);
-          harvestPageBlocks();
-          await delay(50);
-        }
-        el.scrollTop = 0;
-        await delay(25);
-      }
-    };
-
-    harvestPageBlocks();
-
-    for (const el of Array.from(
-      document.querySelectorAll(".notion-scroller"),
-    ) as HTMLElement[]) {
-      await scrollElement(el);
-      harvestPageBlocks();
-    }
-
-    const height = () =>
-      Math.max(
-        document.body?.scrollHeight || 0,
-        document.documentElement?.scrollHeight || 0,
-        pageContent()?.scrollHeight || 0,
-      );
-
-    // Step through the full page even when scrollHeight is pre-sized by
-    // virtualization placeholders (height may not grow on each scroll).
-    let stableRounds = 0;
-    let prevCount = accumulated.size;
-    let maxY = height();
-    const step = Math.max(140, Math.floor(window.innerHeight * 0.55) || 140);
-    for (let pass = 0; pass < 3; pass++) {
-      maxY = height();
-      for (let y = 0; y <= maxY + step; y += step) {
-        window.scrollTo(0, Math.min(y, height()));
-        harvestPageBlocks();
-        await delay(70);
-        maxY = Math.max(maxY, height());
-      }
-      window.scrollTo(0, height());
-      harvestPageBlocks();
-      await delay(120);
-      if (accumulated.size === prevCount) {
-        stableRounds += 1;
-        if (stableRounds >= 2) break;
-      } else {
-        stableRounds = 0;
-        prevCount = accumulated.size;
-      }
-    }
-
-    window.scrollTo(0, 0);
-    await delay(80);
-    harvestPageBlocks();
-    restorePageBlocks();
-    await delay(40);
-  });
+  await accumulateVirtualizedPageBlocks(page);
 }
 
 /**
@@ -187,6 +66,10 @@ export async function collectSameSiteLinks(
     const out = new Set<string>();
     const pageIdInPath = /(?:-|\/)([0-9a-f]{32})(?:\?|#|$)/i;
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const harvestBlocks = () => {
+      const w = window as Window & { __nspHarvestPageBlocks?: () => number };
+      w.__nspHarvestPageBlocks?.();
+    };
 
     const add = (href: string | null | undefined) => {
       if (!href) return;
@@ -264,6 +147,7 @@ export async function collectSameSiteLinks(
     };
 
     harvest();
+    harvestBlocks();
 
     for (const scroller of Array.from(
       document.querySelectorAll(".notion-scroller"),
@@ -277,6 +161,7 @@ export async function collectSameSiteLinks(
           scroller.scrollLeft = Math.min(x, maxX);
           await delay(35);
           harvest();
+          harvestBlocks();
         }
         scroller.scrollLeft = 0;
       }
@@ -285,10 +170,12 @@ export async function collectSameSiteLinks(
           scroller.scrollTop = Math.min(y, maxY);
           await delay(35);
           harvest();
+          harvestBlocks();
         }
-        scroller.scrollTop = 0;
+        scroller.scrollTop = maxY;
       }
       harvest();
+      harvestBlocks();
     }
 
     const height = () =>
@@ -304,10 +191,10 @@ export async function collectSameSiteLinks(
       window.scrollTo(0, h);
       await delay(50);
       harvest();
+      harvestBlocks();
     }
-    window.scrollTo(0, 0);
-    await delay(40);
     harvest();
+    harvestBlocks();
 
     return [...out];
   }, origin);
